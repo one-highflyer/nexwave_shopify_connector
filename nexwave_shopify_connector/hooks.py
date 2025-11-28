@@ -5,21 +5,62 @@ app_description = "Multi-store Shopify connector for NexWave (ERPNext)"
 app_email = "imesha@highflyerglobal.com"
 app_license = "mit"
 
-# Apps
+# Required Apps
 # ------------------
+required_apps = ["frappe", "erpnext"]
 
-# required_apps = []
+# Fixtures
+# ------------------
+fixtures = [
+	{
+		"doctype": "Custom Field",
+		"filters": [
+			["name", "in", [
+				# Item fields
+				"Item-shopify_stores_section",
+				"Item-shopify_stores",
+				# Customer fields
+				"Customer-shopify_customer_section",
+				"Customer-shopify_customer_id",
+				# Sales Order fields
+				"Sales Order-shopify_section",
+				"Sales Order-shopify_store",
+				"Sales Order-shopify_order_id",
+				"Sales Order-shopify_order_number",
+				# Delivery Note fields
+				"Delivery Note-shopify_section",
+				"Delivery Note-shopify_store",
+				"Delivery Note-shopify_order_id",
+				"Delivery Note-shopify_order_number",
+				# Sales Invoice fields
+				"Sales Invoice-shopify_section",
+				"Sales Invoice-shopify_store",
+				"Sales Invoice-shopify_order_id",
+				"Sales Invoice-shopify_order_number",
+			]]
+		]
+	}
+]
 
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "nexwave_shopify_connector",
-# 		"logo": "/assets/nexwave_shopify_connector/logo.png",
-# 		"title": "NexWave Shopify Connector",
-# 		"route": "/nexwave_shopify_connector",
-# 		"has_permission": "nexwave_shopify_connector.api.permission.has_app_permission"
+# Document Events
+# ---------------
+# Hook on document methods and events
+
+# doc_events = {
+# 	"Item": {
+# 		"on_update": "nexwave_shopify_connector.shopify.product.sync_item_to_shopify",
+# 		"after_insert": "nexwave_shopify_connector.shopify.product.sync_item_to_shopify",
 # 	}
-# ]
+# }
+
+# Scheduled Tasks
+# ---------------
+
+# scheduler_events = {
+# 	"all": [
+# 		"nexwave_shopify_connector.shopify.inventory.update_inventory_on_shopify"
+# 	],
+# }
 
 # Includes in <head>
 # ------------------
@@ -133,39 +174,6 @@ app_license = "mit"
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
-# Document Events
-# ---------------
-# Hook on document methods and events
-
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
-
-# Scheduled Tasks
-# ---------------
-
-# scheduler_events = {
-# 	"all": [
-# 		"nexwave_shopify_connector.tasks.all"
-# 	],
-# 	"daily": [
-# 		"nexwave_shopify_connector.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"nexwave_shopify_connector.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"nexwave_shopify_connector.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"nexwave_shopify_connector.tasks.monthly"
-# 	],
-# }
-
 # Testing
 # -------
 
@@ -241,4 +249,3 @@ app_license = "mit"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-

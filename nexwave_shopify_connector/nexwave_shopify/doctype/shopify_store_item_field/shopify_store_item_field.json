@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "creation": "2025-11-28 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "erpnext_field",
+  "shopify_field_type",
+  "column_break_1",
+  "shopify_standard_field",
+  "metafield_namespace",
+  "metafield_key",
+  "metafield_type",
+  "column_break_2",
+  "default_value"
+ ],
+ "fields": [
+  {
+   "fieldname": "erpnext_field",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "ERPNext Field",
+   "reqd": 1,
+   "description": "Field name from Item DocType (e.g., description, brand, custom_color)"
+  },
+  {
+   "fieldname": "shopify_field_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Shopify Field Type",
+   "options": "Standard Field\nMetafield",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.shopify_field_type=='Standard Field'",
+   "fieldname": "shopify_standard_field",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Shopify Standard Field",
+   "options": "\nbody_html\nvendor\nproduct_type\ntags\nhandle\ncompare_at_price\nprice\nweight\nweight_unit\nbarcode\nsku"
+  },
+  {
+   "depends_on": "eval:doc.shopify_field_type=='Metafield'",
+   "fieldname": "metafield_namespace",
+   "fieldtype": "Data",
+   "label": "Metafield Namespace",
+   "description": "e.g., custom, specifications"
+  },
+  {
+   "depends_on": "eval:doc.shopify_field_type=='Metafield'",
+   "fieldname": "metafield_key",
+   "fieldtype": "Data",
+   "label": "Metafield Key",
+   "description": "e.g., color, material"
+  },
+  {
+   "depends_on": "eval:doc.shopify_field_type=='Metafield'",
+   "fieldname": "metafield_type",
+   "fieldtype": "Select",
+   "label": "Metafield Type",
+   "options": "\nsingle_line_text_field\nmulti_line_text_field\nnumber_integer\nnumber_decimal\nboolean\ndate\njson\nurl\ncolor\nrating"
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "default_value",
+   "fieldtype": "Data",
+   "label": "Default Value",
+   "description": "Used when ERPNext field is empty"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-11-28 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "NexWave Shopify",
+ "name": "Shopify Store Item Field",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

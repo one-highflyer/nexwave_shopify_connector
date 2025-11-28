@@ -1,0 +1,160 @@
+[
+	{
+		"doctype": "Custom Field",
+		"name": "Item-shopify_stores_section",
+		"dt": "Item",
+		"fieldname": "shopify_stores_section",
+		"fieldtype": "Section Break",
+		"insert_after": "stock_uom",
+		"label": "Shopify Stores"
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Item-shopify_stores",
+		"dt": "Item",
+		"fieldname": "shopify_stores",
+		"fieldtype": "Table",
+		"insert_after": "shopify_stores_section",
+		"label": "Shopify Stores",
+		"options": "Item Shopify Store"
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Customer-shopify_customer_section",
+		"dt": "Customer",
+		"fieldname": "shopify_customer_section",
+		"fieldtype": "Section Break",
+		"insert_after": "customer_type",
+		"label": "Shopify"
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Customer-shopify_customer_id",
+		"dt": "Customer",
+		"fieldname": "shopify_customer_id",
+		"fieldtype": "Data",
+		"insert_after": "shopify_customer_section",
+		"label": "Shopify Customer ID",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_section",
+		"dt": "Sales Order",
+		"fieldname": "shopify_section",
+		"fieldtype": "Section Break",
+		"insert_after": "customer_name",
+		"label": "Shopify"
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_store",
+		"dt": "Sales Order",
+		"fieldname": "shopify_store",
+		"fieldtype": "Link",
+		"insert_after": "shopify_section",
+		"label": "Shopify Store",
+		"options": "Shopify Store",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_order_id",
+		"dt": "Sales Order",
+		"fieldname": "shopify_order_id",
+		"fieldtype": "Data",
+		"insert_after": "shopify_store",
+		"label": "Shopify Order ID",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_order_number",
+		"dt": "Sales Order",
+		"fieldname": "shopify_order_number",
+		"fieldtype": "Data",
+		"insert_after": "shopify_order_id",
+		"label": "Shopify Order Number",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Delivery Note-shopify_section",
+		"dt": "Delivery Note",
+		"fieldname": "shopify_section",
+		"fieldtype": "Section Break",
+		"insert_after": "customer_name",
+		"label": "Shopify"
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Delivery Note-shopify_store",
+		"dt": "Delivery Note",
+		"fieldname": "shopify_store",
+		"fieldtype": "Link",
+		"insert_after": "shopify_section",
+		"label": "Shopify Store",
+		"options": "Shopify Store",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Delivery Note-shopify_order_id",
+		"dt": "Delivery Note",
+		"fieldname": "shopify_order_id",
+		"fieldtype": "Data",
+		"insert_after": "shopify_store",
+		"label": "Shopify Order ID",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Delivery Note-shopify_order_number",
+		"dt": "Delivery Note",
+		"fieldname": "shopify_order_number",
+		"fieldtype": "Data",
+		"insert_after": "shopify_order_id",
+		"label": "Shopify Order Number",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Invoice-shopify_section",
+		"dt": "Sales Invoice",
+		"fieldname": "shopify_section",
+		"fieldtype": "Section Break",
+		"insert_after": "customer_name",
+		"label": "Shopify"
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Invoice-shopify_store",
+		"dt": "Sales Invoice",
+		"fieldname": "shopify_store",
+		"fieldtype": "Link",
+		"insert_after": "shopify_section",
+		"label": "Shopify Store",
+		"options": "Shopify Store",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Invoice-shopify_order_id",
+		"dt": "Sales Invoice",
+		"fieldname": "shopify_order_id",
+		"fieldtype": "Data",
+		"insert_after": "shopify_store",
+		"label": "Shopify Order ID",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Invoice-shopify_order_number",
+		"dt": "Sales Invoice",
+		"fieldname": "shopify_order_number",
+		"fieldtype": "Data",
+		"insert_after": "shopify_order_id",
+		"label": "Shopify Order Number",
+		"read_only": 1
+	}
+]

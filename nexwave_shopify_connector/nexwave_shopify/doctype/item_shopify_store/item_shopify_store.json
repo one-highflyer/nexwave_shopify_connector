@@ -1,0 +1,88 @@
+{
+ "actions": [],
+ "creation": "2025-11-28 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "shopify_store",
+  "enabled",
+  "column_break_1",
+  "shopify_product_id",
+  "shopify_variant_id",
+  "shopify_sku",
+  "column_break_2",
+  "last_sync_at",
+  "last_sync_hash"
+ ],
+ "fields": [
+  {
+   "fieldname": "shopify_store",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Shopify Store",
+   "options": "Shopify Store",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled",
+   "description": "Manual override for sync eligibility"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "shopify_product_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Shopify Product ID",
+   "description": "Existing Shopify product ID (auto-filled on sync)"
+  },
+  {
+   "fieldname": "shopify_variant_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Shopify Variant ID",
+   "description": "Existing variant ID (auto-filled on sync)"
+  },
+  {
+   "fieldname": "shopify_sku",
+   "fieldtype": "Data",
+   "label": "Shopify SKU"
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_sync_at",
+   "fieldtype": "Datetime",
+   "label": "Last Sync At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_sync_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Last Sync Hash",
+   "description": "For change detection optimization"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-11-28 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "NexWave Shopify",
+ "name": "Item Shopify Store",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

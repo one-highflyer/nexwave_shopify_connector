@@ -1,0 +1,209 @@
+# Copyright (c) 2024, HighFlyer and contributors
+# For license information, please see license.txt
+
+import json
+from typing import Any, Dict, Optional
+
+import frappe
+from frappe import _
+
+
+def create_shopify_log(
+	status: str = "Queued",
+	method: Optional[str] = None,
+	shopify_store: Optional[str] = None,
+	request_data: Optional[Dict[str, Any]] = None,
+	response_data: Optional[Dict[str, Any]] = None,
+	exception: Optional[str] = None,
+	message: Optional[str] = None,
+) -> "Document":
+	"""
+	Create an Ecommerce Integration Log entry for Shopify operations.
+
+	Uses the existing Ecommerce Integration Log DocType from ecommerce_integrations.
+
+	Args:
+		status: Log status (Queued, Success, Error)
+		method: The method being called
+		shopify_store: Name of the Shopify Store
+		request_data: Request payload
+		response_data: Response data
+		exception: Exception message
+		message: Additional message
+
+	Returns:
+		Created log document
+	"""
+	# Get store from context if not provided
+	if not shopify_store:
+		shopify_store = frappe.flags.get("shopify_store")
+
+	# Try to use Ecommerce Integration Log if available
+	if frappe.db.exists("DocType", "Ecommerce Integration Log"):
+		log = frappe.get_doc({
+			"doctype": "Ecommerce Integration Log",
+			"integration": "Shopify",
+			"status": status,
+			"method": method,
+			"reference_doctype": "Shopify Store" if shopify_store else None,
+			"reference_docname": shopify_store,
+			"request_data": json.dumps(request_data, indent=2) if request_data else None,
+			"response_data": json.dumps(response_data, indent=2) if response_data else None,
+			"message": message,
+			"ecommerce_item": None,
+		})
+
+		if exception:
+			log.status = "Error"
+			log.message = str(exception)
+
+		log.insert(ignore_permissions=True)
+		frappe.db.commit()
+		return log
+	else:
+		# Fallback to Error Log if Ecommerce Integration Log doesn't exist
+		frappe.log_error(
+			title=f"Shopify [{shopify_store or 'Unknown'}] - {status}",
+			message=f"Method: {method}\nStore: {shopify_store}\nRequest: {request_data}\nResponse: {response_data}\nException: {exception}"
+		)
+		return frappe._dict(name="error_log")
+
+
+def get_shopify_store_context() -> Optional[str]:
+	"""
+	Get the current Shopify Store from context.
+
+	Returns:
+		Shopify Store name if set, None otherwise
+	"""
+	return frappe.flags.get("shopify_store")
+
+
+def is_item_eligible_for_store(item: "Document", store: "Document") -> bool:
+	"""
+	Check if an item is eligible to sync to a specific store.
+
+	Eligibility is determined by:
+	1. Manual override via Item Shopify Store row with enabled=1
+	2. Automatic eligibility via store filters (if no manual row or row exists but not explicitly disabled)
+
+	Args:
+		item: Item document
+		store: Shopify Store document
+
+	Returns:
+		True if item should sync to this store
+	"""
+	# Check for manual override via Item Shopify Store
+	manual_link = get_item_shopify_store_row(item, store)
+
+	if manual_link:
+		if manual_link.enabled:
+			return True
+		else:
+			return False  # Explicitly disabled
+
+	# Check auto-eligibility via store filters
+	if not store.item_filters:
+		return False  # No filters means no auto-eligibility
+
+	for filter_row in store.item_filters:
+		if not evaluate_filter(item, filter_row):
+			return False
+
+	return True  # All filters passed
+
+
+def get_item_shopify_store_row(item: "Document", store: "Document") -> Optional["Document"]:
+	"""
+	Get the Item Shopify Store child row for a specific store.
+
+	Args:
+		item: Item document
+		store: Shopify Store document
+
+	Returns:
+		Item Shopify Store row if found, None otherwise
+	"""
+	if not hasattr(item, "shopify_stores"):
+		return None
+
+	for row in item.shopify_stores:
+		if row.shopify_store == store.name:
+			return row
+
+	return None
+
+
+def evaluate_filter(item: "Document", filter_row: "Document") -> bool:
+	"""
+	Evaluate a single filter condition against an item.
+
+	Args:
+		item: Item document
+		filter_row: Shopify Store Item Filter row
+
+	Returns:
+		True if filter condition passes
+	"""
+	field_name = filter_row.erpnext_field
+	filter_type = filter_row.filter_type
+	filter_value = filter_row.field_value
+
+	# Get field value from item
+	item_value = getattr(item, field_name, None) if hasattr(item, field_name) else None
+
+	# Also try to get from item dict if not found
+	if item_value is None and isinstance(item, dict):
+		item_value = item.get(field_name)
+
+	if filter_type == "Field Has Value" or filter_type == "Field Not Empty":
+		# Check if field has any value (not None, not empty string, not 0)
+		return bool(item_value)
+
+	elif filter_type == "Field Equals":
+		# Check if field equals specific value
+		return str(item_value) == str(filter_value) if item_value is not None else False
+
+	return False
+
+
+def get_eligible_stores_for_item(item: "Document") -> list:
+	"""
+	Get all stores that an item is eligible to sync to.
+
+	Args:
+		item: Item document
+
+	Returns:
+		List of Shopify Store documents
+	"""
+	eligible_stores = []
+
+	# Get all enabled stores with item sync enabled
+	stores = frappe.get_all(
+		"Shopify Store",
+		filters={"enabled": 1, "enable_item_sync": 1},
+		pluck="name"
+	)
+
+	for store_name in stores:
+		store = frappe.get_doc("Shopify Store", store_name)
+		if is_item_eligible_for_store(item, store):
+			eligible_stores.append(store)
+
+	return eligible_stores
+
+
+def format_shopify_log_message(store_name: str, message: str) -> str:
+	"""
+	Format a log message with store context.
+
+	Args:
+		store_name: Name of the Shopify Store
+		message: Log message
+
+	Returns:
+		Formatted message with store context
+	"""
+	return f"[Shopify Store: {store_name}] {message}"

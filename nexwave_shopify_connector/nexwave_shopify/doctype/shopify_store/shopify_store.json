@@ -1,0 +1,367 @@
+{
+ "actions": [],
+ "autoname": "field:shop_domain",
+ "creation": "2025-11-28 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "section_break_auth",
+  "shop_domain",
+  "api_version",
+  "column_break_auth",
+  "access_token",
+  "shared_secret",
+  "section_break_erpnext",
+  "company",
+  "default_customer",
+  "customer_group",
+  "column_break_erpnext",
+  "cost_center",
+  "price_list",
+  "item_group",
+  "section_break_orders",
+  "sync_orders",
+  "sales_order_series",
+  "delivery_note_series",
+  "sales_invoice_series",
+  "column_break_orders",
+  "sync_delivery_note",
+  "sync_sales_invoice",
+  "section_break_inventory",
+  "enable_inventory_sync",
+  "warehouse",
+  "inventory_sync_frequency",
+  "column_break_inventory",
+  "last_inventory_sync",
+  "warehouse_mapping",
+  "section_break_item_sync",
+  "enable_item_sync",
+  "update_shopify_on_item_update",
+  "item_field_map",
+  "section_break_collections",
+  "collection_mapping",
+  "section_break_filters",
+  "item_filters",
+  "section_break_taxes",
+  "default_sales_tax_account",
+  "default_shipping_charges_account",
+  "tax_accounts",
+  "section_break_webhooks",
+  "webhooks"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "section_break_auth",
+   "fieldtype": "Section Break",
+   "label": "Authentication"
+  },
+  {
+   "description": "e.g., mystore.myshopify.com",
+   "fieldname": "shop_domain",
+   "fieldtype": "Data",
+   "label": "Shop Domain",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "2024-01",
+   "fieldname": "api_version",
+   "fieldtype": "Data",
+   "label": "API Version"
+  },
+  {
+   "fieldname": "column_break_auth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "access_token",
+   "fieldtype": "Password",
+   "label": "Access Token",
+   "mandatory_depends_on": "eval:doc.enabled"
+  },
+  {
+   "description": "For webhook HMAC validation",
+   "fieldname": "shared_secret",
+   "fieldtype": "Data",
+   "label": "Shared Secret"
+  },
+  {
+   "fieldname": "section_break_erpnext",
+   "fieldtype": "Section Break",
+   "label": "ERPNext Settings"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "default_customer",
+   "fieldtype": "Link",
+   "label": "Default Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "customer_group",
+   "fieldtype": "Link",
+   "label": "Customer Group",
+   "options": "Customer Group"
+  },
+  {
+   "fieldname": "column_break_erpnext",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "price_list",
+   "fieldtype": "Link",
+   "label": "Price List",
+   "options": "Price List"
+  },
+  {
+   "description": "Default item group for new items",
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "Item Group",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "section_break_orders",
+   "fieldtype": "Section Break",
+   "label": "Order Settings"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_orders",
+   "fieldtype": "Check",
+   "label": "Sync Orders"
+  },
+  {
+   "fieldname": "sales_order_series",
+   "fieldtype": "Select",
+   "label": "Sales Order Series"
+  },
+  {
+   "fieldname": "delivery_note_series",
+   "fieldtype": "Select",
+   "label": "Delivery Note Series"
+  },
+  {
+   "fieldname": "sales_invoice_series",
+   "fieldtype": "Select",
+   "label": "Sales Invoice Series"
+  },
+  {
+   "fieldname": "column_break_orders",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_delivery_note",
+   "fieldtype": "Check",
+   "label": "Sync Delivery Note"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_sales_invoice",
+   "fieldtype": "Check",
+   "label": "Sync Sales Invoice"
+  },
+  {
+   "fieldname": "section_break_inventory",
+   "fieldtype": "Section Break",
+   "label": "Inventory Settings"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_inventory_sync",
+   "fieldtype": "Check",
+   "label": "Enable Inventory Sync"
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "label": "Default Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "default": "30",
+   "description": "Sync interval in minutes",
+   "fieldname": "inventory_sync_frequency",
+   "fieldtype": "Int",
+   "label": "Inventory Sync Frequency"
+  },
+  {
+   "fieldname": "column_break_inventory",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_inventory_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Inventory Sync",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warehouse_mapping",
+   "fieldtype": "Table",
+   "label": "Warehouse Mapping",
+   "options": "Shopify Store Warehouse Mapping"
+  },
+  {
+   "fieldname": "section_break_item_sync",
+   "fieldtype": "Section Break",
+   "label": "Item Sync Settings"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_item_sync",
+   "fieldtype": "Check",
+   "label": "Enable Item Sync"
+  },
+  {
+   "default": "0",
+   "fieldname": "update_shopify_on_item_update",
+   "fieldtype": "Check",
+   "label": "Update Shopify on Item Update"
+  },
+  {
+   "fieldname": "item_field_map",
+   "fieldtype": "Table",
+   "label": "Item Field Mapping",
+   "options": "Shopify Store Item Field"
+  },
+  {
+   "fieldname": "section_break_collections",
+   "fieldtype": "Section Break",
+   "label": "Collection Mapping"
+  },
+  {
+   "description": "Map ERPNext field values to Shopify Collections",
+   "fieldname": "collection_mapping",
+   "fieldtype": "Table",
+   "label": "Collection Mapping",
+   "options": "Shopify Store Collection Mapping"
+  },
+  {
+   "fieldname": "section_break_filters",
+   "fieldtype": "Section Break",
+   "label": "Item Eligibility Filters"
+  },
+  {
+   "description": "Define automatic eligibility rules for which items sync to this store",
+   "fieldname": "item_filters",
+   "fieldtype": "Table",
+   "label": "Item Filters",
+   "options": "Shopify Store Item Filter"
+  },
+  {
+   "fieldname": "section_break_taxes",
+   "fieldtype": "Section Break",
+   "label": "Tax Settings"
+  },
+  {
+   "fieldname": "default_sales_tax_account",
+   "fieldtype": "Link",
+   "label": "Default Sales Tax Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "default_shipping_charges_account",
+   "fieldtype": "Link",
+   "label": "Default Shipping Charges Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "tax_accounts",
+   "fieldtype": "Table",
+   "label": "Tax Accounts",
+   "options": "Shopify Store Tax Account"
+  },
+  {
+   "fieldname": "section_break_webhooks",
+   "fieldtype": "Section Break",
+   "label": "Webhooks"
+  },
+  {
+   "fieldname": "webhooks",
+   "fieldtype": "Table",
+   "label": "Registered Webhooks",
+   "options": "Shopify Store Webhook",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-11-28 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "NexWave Shopify",
+ "name": "Shopify Store",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User"
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
