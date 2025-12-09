@@ -15,8 +15,8 @@ from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 
-# Default API version
-DEFAULT_API_VERSION = "2024-01"
+# Default API version (use a recent stable version)
+DEFAULT_API_VERSION = "2024-10"
 
 # Webhook events to register
 WEBHOOK_EVENTS = [

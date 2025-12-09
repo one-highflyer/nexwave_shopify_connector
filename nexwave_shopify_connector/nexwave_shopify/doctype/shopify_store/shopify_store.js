@@ -19,7 +19,24 @@ frappe.ui.form.on("Shopify Store", {
 					method: "fetch_shopify_locations",
 					doc: frm.doc,
 					freeze: true,
-					freeze_message: __("Fetching locations...")
+					freeze_message: __("Fetching locations..."),
+					callback: function(r) {
+						if (r.message) {
+							// Clear existing rows
+							frm.clear_table("warehouse_mapping");
+
+							// Add fetched locations to the table
+							r.message.forEach(function(location) {
+								let row = frm.add_child("warehouse_mapping");
+								row.shopify_location_id = location.shopify_location_id;
+								row.shopify_location_name = location.shopify_location_name;
+								row.erpnext_warehouse = location.erpnext_warehouse;
+							});
+
+							// Refresh the field to show updated data
+							frm.refresh_field("warehouse_mapping");
+						}
+					}
 				});
 			}, __("Actions"));
 
@@ -65,6 +82,16 @@ frappe.ui.form.on("Shopify Store", {
 
 		// Filter warehouse by company
 		frm.set_query("warehouse", function() {
+			return {
+				filters: {
+					company: frm.doc.company,
+					is_group: 0
+				}
+			};
+		});
+
+		// Filter warehouse mapping by company
+		frm.set_query("erpnext_warehouse", "warehouse_mapping", function() {
 			return {
 				filters: {
 					company: frm.doc.company,
