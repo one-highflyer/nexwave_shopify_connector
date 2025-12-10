@@ -280,6 +280,155 @@ print(f"HMAC Valid: {is_valid}")
 
 ---
 
+## Part 6: Test Product Sync (ERPNext → Shopify)
+
+### Step 1: Enable Item Sync on Store
+
+1. Open your Shopify Store record
+2. In the **Item Sync Settings** section:
+   - Check **Enable Item Sync**
+   - Check **Update Shopify on Item Update** (for automatic sync)
+
+### Step 2: Configure Field Mappings
+
+1. In the **Item Field Mapping** table, add mappings:
+
+| ERPNext Field | Shopify Field Type | Shopify Standard Field |
+|---------------|-------------------|----------------------|
+| `description` | Standard Field | `body_html` |
+| `brand` | Standard Field | `vendor` |
+| `item_group` | Standard Field | `product_type` |
+| `standard_rate` | Standard Field | `price` |
+| `item_code` | Standard Field | `sku` |
+
+2. Save the store configuration
+
+### Important: Sync Behavior
+
+The item sync is **one-way (ERPNext → Shopify)**:
+
+- If a Shopify product ID is already mapped to the item → **Update** existing product
+- If no product ID mapping exists → **Create new product** in Shopify
+
+When creating new products:
+- SKU is automatically set to the ERPNext `item_code`
+- Inventory tracking is enabled for stock items (`is_stock_item=1`)
+- Title is set to `item_name`
+
+**For existing Shopify products:** If you have products already in Shopify that you want to link to ERPNext items, use the **"Fetch Products & Map by SKU"** action on the Shopify Store form. This will match Shopify SKUs to ERPNext item codes and create the mappings.
+
+### Step 3: Link an Item to the Store
+
+1. Open an Item in ERPNext
+2. Scroll to the **Shopify Stores** section (custom field added by connector)
+3. Add a row:
+   - **Shopify Store**: Select your store
+   - **Enabled**: Check
+4. Save the Item
+
+### Step 4: Manual Sync
+
+1. Go back to the Shopify Store record
+2. Click **Sync** → **Sync All Items**
+3. Confirm the action
+4. Check the Shopify admin to see if the product was created
+
+### Step 5: Verify in Console
+
+```bash
+bench --site demo.localhost console
+```
+
+```python
+import frappe
+
+# Check Item Shopify Store rows
+rows = frappe.get_all(
+    "Item Shopify Store",
+    filters={"shopify_store": "nexwave-test.myshopify.com"},
+    fields=["parent", "shopify_product_id", "shopify_variant_id", "last_sync_at"]
+)
+for row in rows:
+    print(f"Item: {row.parent}")
+    print(f"  Product ID: {row.shopify_product_id}")
+    print(f"  Variant ID: {row.shopify_variant_id}")
+    print(f"  Last Sync: {row.last_sync_at}")
+```
+
+---
+
+## Part 7: Test Inventory Sync
+
+### Step 1: Enable Inventory Sync
+
+1. Open your Shopify Store record
+2. In the **Inventory Settings** section:
+   - Check **Enable Inventory Sync**
+   - Set **Inventory Sync Frequency** (e.g., 30 minutes)
+
+### Step 2: Configure Warehouse Mapping
+
+1. Click **Actions** → **Fetch Shopify Locations**
+2. For each location, select the corresponding ERPNext warehouse
+3. Save the store
+
+### Step 3: Add Stock in ERPNext
+
+1. Create a Stock Entry (Material Receipt) to add stock for your test item
+2. Select the warehouse mapped to your Shopify location
+
+### Step 4: Manual Inventory Sync
+
+1. On the Shopify Store, click **Sync** → **Sync Inventory**
+2. Confirm the action
+3. Check Shopify admin → Inventory to verify stock levels
+
+### Step 5: Verify in Console
+
+```bash
+bench --site demo.localhost console
+```
+
+```python
+import frappe
+
+# Check stock in ERPNext
+item_code = "YOUR-ITEM-CODE"
+warehouse = "YOUR-WAREHOUSE"
+
+qty = frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty")
+print(f"Stock for {item_code} in {warehouse}: {qty}")
+```
+
+---
+
+## Part 8: Test Price Sync
+
+Price sync is handled via the product sync field mappings.
+
+### Step 1: Configure Price Field Mapping
+
+1. Open your Shopify Store record
+2. Ensure `price_list` is set to your selling price list
+3. In **Item Field Mapping**, ensure you have:
+   - ERPNext Field: `standard_rate`
+   - Shopify Field Type: Standard Field
+   - Shopify Standard Field: `price`
+
+### Step 2: Set Item Price
+
+1. Create an Item Price record for your item:
+   - Item: Your test item
+   - Price List: The price list configured on the store
+   - Rate: e.g., 99.99
+
+### Step 3: Sync and Verify
+
+1. Trigger a product sync (via **Sync All Items** or by updating the item)
+2. Check Shopify admin to verify the price
+
+---
+
 ## Current Implementation Status
 
 ### ✅ Working (Ready to Test)
@@ -292,6 +441,13 @@ print(f"HMAC Valid: {is_valid}")
 | HMAC validation logic | ✅ Complete |
 | Item eligibility filters | ✅ Complete |
 | Custom fields on Item, Customer, SO, DN, SI | ✅ Complete |
+| Test Connection button | ✅ Complete |
+| Fetch Shopify Locations | ✅ Complete |
+| **Product Sync (ERPNext → Shopify)** | ✅ Complete |
+| **Inventory Sync** | ✅ Complete |
+| **Price Sync (via field mapping)** | ✅ Complete |
+| **Manual Sync Buttons** | ✅ Complete |
+| **Scheduled Inventory Sync** | ✅ Complete |
 
 ### ❌ Not Yet Implemented
 
@@ -300,11 +456,8 @@ print(f"HMAC Valid: {is_valid}")
 | Order sync (Shopify → ERPNext) | ❌ Webhook handlers not created |
 | Invoice creation on payment | ❌ Handler not created |
 | Delivery note on fulfillment | ❌ Handler not created |
-| Item sync (ERPNext → Shopify) | ❌ No sync logic |
-| Inventory sync | ❌ Not implemented |
 | Webhook auto-registration | ❌ TODO in code |
-| `test_connection()` button | ❌ TODO in code |
-| `fetch_shopify_locations()` | ❌ TODO in code |
+| Fetch Products & Map by SKU | ❌ TODO in code |
 
 ---
 
@@ -338,12 +491,9 @@ bench --site demo.localhost clear-cache
 
 ## Next Steps
 
-After confirming basic connectivity:
+After confirming product and inventory sync:
 
-1. **Implement order sync** - Handle `orders/create` webhook
+1. **Implement order sync** - Handle `orders/create` webhook to create Sales Orders
 2. **Implement webhook registration** - Auto-register webhooks when store is enabled
-3. **Implement item sync** - Push items from ERPNext to Shopify
-4. **Implement inventory sync** - Push stock levels to Shopify locations
-
-
-Token: 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
+3. **Implement fulfillment sync** - Create Delivery Notes from Shopify fulfillments
+4. **Implement invoice sync** - Create Sales Invoices when orders are paid

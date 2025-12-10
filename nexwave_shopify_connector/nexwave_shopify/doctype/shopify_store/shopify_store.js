@@ -53,6 +53,39 @@ frappe.ui.form.on("Shopify Store", {
 					}
 				);
 			}, __("Actions"));
+
+			// Sync buttons - only show when relevant settings are enabled
+			if (frm.doc.enabled && frm.doc.enable_item_sync) {
+				frm.add_custom_button(__("Sync All Items"), function() {
+					frappe.confirm(
+						__("This will sync all eligible items to Shopify. This may take a while for large catalogs. Continue?"),
+						function() {
+							frm.call({
+								method: "sync_all_items",
+								doc: frm.doc,
+								freeze: true,
+								freeze_message: __("Queuing items for sync...")
+							});
+						}
+					);
+				}, __("Sync"));
+			}
+
+			if (frm.doc.enabled && frm.doc.enable_inventory_sync) {
+				frm.add_custom_button(__("Sync Inventory"), function() {
+					frappe.confirm(
+						__("This will sync inventory levels to Shopify for all mapped items. Continue?"),
+						function() {
+							frm.call({
+								method: "sync_inventory",
+								doc: frm.doc,
+								freeze: true,
+								freeze_message: __("Queuing inventory sync...")
+							});
+						}
+					);
+				}, __("Sync"));
+			}
 		}
 
 		// Populate series options

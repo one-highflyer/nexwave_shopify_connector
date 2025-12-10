@@ -1,0 +1,125 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"shortcut_section\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Quick Access</b></span>\",\"col\":12}},{\"id\":\"shopify_stores_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Shopify Stores\",\"col\":4}},{\"id\":\"sync_logs_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sync Logs\",\"col\":4}},{\"id\":\"error_logs_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Error Logs\",\"col\":4}},{\"id\":\"spacer_1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"settings_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}},{\"id\":\"logs_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Sync Logs\",\"col\":4}},{\"id\":\"related_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Related Data\",\"col\":4}}]",
+ "creation": "2025-12-10 12:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "assets",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "NexWave Shopify",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Shopify Store",
+   "link_to": "Shopify Store",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sync Logs",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "NexWave Shopify Log",
+   "link_to": "NexWave Shopify Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Related Data",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Warehouse",
+   "link_to": "Warehouse",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Price List",
+   "link_to": "Price List",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2025-12-11 00:15:00.000000",
+ "modified_by": "Administrator",
+ "module": "NexWave Shopify",
+ "name": "NexWave Shopify",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 25.0,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "label": "Shopify Stores",
+   "link_to": "Shopify Store",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "label": "Sync Logs",
+   "link_to": "NexWave Shopify Log",
+   "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "format": "{} Errors",
+   "label": "Error Logs",
+   "link_to": "NexWave Shopify Log",
+   "stats_filter": "{\"status\":\"Error\"}",
+   "type": "DocType"
+  }
+ ],
+ "title": "NexWave Shopify"
+}

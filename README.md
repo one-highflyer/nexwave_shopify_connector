@@ -60,6 +60,43 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 - Map ERPNext fields to Shopify **standard fields** or **metafields**
 - Per-store mapping configuration
 
+### Item Sync Logic
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Item Sync Decision Flow                      │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │            Item eligible for Shopify Store?             │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │         Has shopify_product_id mapping?                 │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│              ┌──────────────┴──────────────┐                   │
+│              │                             │                   │
+│              ▼ YES                         ▼ NO                │
+│  ┌─────────────────────┐       ┌─────────────────────┐        │
+│  │  UPDATE existing    │       │  CREATE new         │        │
+│  │  Shopify product    │       │  Shopify product    │        │
+│  │                     │       │                     │        │
+│  │  Uses stored        │       │  Sets:              │        │
+│  │  product_id &       │       │  - SKU = item_code  │        │
+│  │  variant_id         │       │  - Track inventory  │        │
+│  │                     │       │    (if stock item)  │        │
+│  └─────────────────────┘       └─────────────────────┘        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Points:**
+- Sync is **one-way** (ERPNext → Shopify)
+- If no product ID mapping exists, a **new product is created** in Shopify
+- SKU is automatically set to the ERPNext `item_code`
+- Inventory tracking is enabled for stock items (`is_stock_item=1`)
+
+**For existing Shopify products:** Use the "Fetch Products & Map by SKU" action on the Shopify Store form to link existing Shopify products to ERPNext items by matching SKU = item_code.
+
 ### Item Eligibility & Filters
 ```
 ┌─────────────────────────────────────────────────────────────────┐

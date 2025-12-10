@@ -16,11 +16,11 @@ def create_shopify_log(
 	response_data: Optional[Dict[str, Any]] = None,
 	exception: Optional[str] = None,
 	message: Optional[str] = None,
+	reference_doctype: Optional[str] = None,
+	reference_name: Optional[str] = None,
 ) -> "Document":
 	"""
-	Create an Ecommerce Integration Log entry for Shopify operations.
-
-	Uses the existing Ecommerce Integration Log DocType from ecommerce_integrations.
+	Create a NexWave Shopify Log entry for Shopify operations.
 
 	Args:
 		status: Log status (Queued, Success, Error)
@@ -30,6 +30,8 @@ def create_shopify_log(
 		response_data: Response data
 		exception: Exception message
 		message: Additional message
+		reference_doctype: Reference DocType (e.g., Item, Sales Order)
+		reference_name: Reference document name
 
 	Returns:
 		Created log document
@@ -38,35 +40,27 @@ def create_shopify_log(
 	if not shopify_store:
 		shopify_store = frappe.flags.get("shopify_store")
 
-	# Try to use Ecommerce Integration Log if available
-	if frappe.db.exists("DocType", "Ecommerce Integration Log"):
-		log = frappe.get_doc({
-			"doctype": "Ecommerce Integration Log",
-			"integration": "Shopify",
-			"status": status,
-			"method": method,
-			"reference_doctype": "Shopify Store" if shopify_store else None,
-			"reference_docname": shopify_store,
-			"request_data": json.dumps(request_data, indent=2) if request_data else None,
-			"response_data": json.dumps(response_data, indent=2) if response_data else None,
-			"message": message,
-			"ecommerce_item": None,
-		})
+	log = frappe.get_doc({
+		"doctype": "NexWave Shopify Log",
+		"status": status,
+		"shopify_store": shopify_store,
+		"method": method,
+		"reference_doctype": reference_doctype,
+		"reference_name": reference_name,
+		"request_data": json.dumps(request_data, indent=2) if request_data else None,
+		"response_data": json.dumps(response_data, indent=2) if response_data else None,
+		"message": message,
+		"traceback": None,
+	})
 
-		if exception:
-			log.status = "Error"
-			log.message = str(exception)
+	if exception:
+		log.status = "Error"
+		log.message = str(exception)
+		log.traceback = frappe.get_traceback() if frappe.local.flags.in_test is not True else None
 
-		log.insert(ignore_permissions=True)
-		frappe.db.commit()
-		return log
-	else:
-		# Fallback to Error Log if Ecommerce Integration Log doesn't exist
-		frappe.log_error(
-			title=f"Shopify [{shopify_store or 'Unknown'}] - {status}",
-			message=f"Method: {method}\nStore: {shopify_store}\nRequest: {request_data}\nResponse: {response_data}\nException: {exception}"
-		)
-		return frappe._dict(name="error_log")
+	log.insert(ignore_permissions=True)
+	frappe.db.commit()
+	return log
 
 
 def get_shopify_store_context() -> Optional[str]:

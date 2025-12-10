@@ -12,6 +12,65 @@ from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VER
 
 
 class ShopifyStore(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_collection_mapping.shopify_store_collection_mapping import (
+			ShopifyStoreCollectionMapping,
+		)
+		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_item_field.shopify_store_item_field import (
+			ShopifyStoreItemField,
+		)
+		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_item_filter.shopify_store_item_filter import (
+			ShopifyStoreItemFilter,
+		)
+		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_tax_account.shopify_store_tax_account import (
+			ShopifyStoreTaxAccount,
+		)
+		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_warehouse_mapping.shopify_store_warehouse_mapping import (
+			ShopifyStoreWarehouseMapping,
+		)
+		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_webhook.shopify_store_webhook import (
+			ShopifyStoreWebhook,
+		)
+
+		access_token: DF.Password | None
+		api_version: DF.Data | None
+		collection_mapping: DF.Table[ShopifyStoreCollectionMapping]
+		company: DF.Link
+		cost_center: DF.Link | None
+		customer_group: DF.Link | None
+		default_customer: DF.Link | None
+		default_sales_tax_account: DF.Link | None
+		default_shipping_charges_account: DF.Link | None
+		delivery_note_series: DF.Literal[None]
+		enable_inventory_sync: DF.Check
+		enable_item_sync: DF.Check
+		enabled: DF.Check
+		inventory_sync_frequency: DF.Int
+		item_field_map: DF.Table[ShopifyStoreItemField]
+		item_filters: DF.Table[ShopifyStoreItemFilter]
+		item_group: DF.Link | None
+		last_inventory_sync: DF.Datetime | None
+		price_list: DF.Link | None
+		sales_invoice_series: DF.Literal[None]
+		sales_order_series: DF.Literal[None]
+		shared_secret: DF.Data | None
+		shop_domain: DF.Data
+		sync_delivery_note: DF.Check
+		sync_orders: DF.Check
+		sync_sales_invoice: DF.Check
+		tax_accounts: DF.Table[ShopifyStoreTaxAccount]
+		update_shopify_on_item_update: DF.Check
+		warehouse: DF.Link | None
+		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
+		webhooks: DF.Table[ShopifyStoreWebhook]
+	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
 
@@ -132,3 +191,31 @@ class ShopifyStore(Document):
 		"""Fetch products from Shopify and auto-map by SKU."""
 		# TODO: Implement SKU matching logic
 		frappe.msgprint(_("Fetching products and mapping by SKU..."))
+
+	@frappe.whitelist()
+	def sync_all_items(self):
+		"""
+		Manual trigger to sync all eligible items to this Shopify store.
+
+		Enqueues sync jobs for all items that:
+		- Have an Item Shopify Store row for this store with enabled=1
+		- Match the store's item filters (if any)
+		"""
+		if not self.enabled:
+			frappe.throw(_("Store is not enabled"))
+
+		if not self.enable_item_sync:
+			frappe.throw(_("Item sync is not enabled for this store"))
+
+		from nexwave_shopify_connector.nexwave_shopify.product import sync_items_to_store
+		sync_items_to_store(self.name)
+
+	@frappe.whitelist()
+	def sync_inventory(self):
+		"""
+		Manual trigger to sync all inventory to this Shopify store.
+
+		Syncs inventory levels for all items that have Shopify product/variant IDs.
+		"""
+		from nexwave_shopify_connector.nexwave_shopify.inventory import manual_inventory_sync
+		manual_inventory_sync(self.name)

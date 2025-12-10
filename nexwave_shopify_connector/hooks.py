@@ -46,21 +46,23 @@ fixtures = [
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"Item": {
-# 		"on_update": "nexwave_shopify_connector.shopify.product.sync_item_to_shopify",
-# 		"after_insert": "nexwave_shopify_connector.shopify.product.sync_item_to_shopify",
-# 	}
-# }
+doc_events = {
+	"Item": {
+		"on_update": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_shopify",
+		"after_insert": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_shopify",
+	}
+}
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"nexwave_shopify_connector.shopify.inventory.update_inventory_on_shopify"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"*/5 * * * *": [
+			"nexwave_shopify_connector.nexwave_shopify.inventory.update_inventory_on_shopify"
+		],
+	},
+}
 
 # Includes in <head>
 # ------------------
@@ -244,8 +246,8 @@ fixtures = [
 # ]
 
 # Automatically update python controller files with type annotations for this app.
-# export_python_type_annotations = True
+export_python_type_annotations = True
 
-# default_log_clearing_doctypes = {
-# 	"Logging DocType Name": 30  # days to retain logs
-# }
+default_log_clearing_doctypes = {
+	"NexWave Shopify Log": 30  # days to retain logs
+}
