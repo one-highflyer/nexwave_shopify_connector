@@ -89,7 +89,7 @@ def sync_item_to_store(item_code: str, store_name: str):
 	if not access_token:
 		frappe.log_error(
 			title=f"Shopify Sync Error - {store_name}",
-			message=f"Access token not configured for store {store_name}"
+			message=f"Access token not configured for store {store_name}",
 		)
 		return
 
@@ -114,7 +114,7 @@ def sync_item_to_store(item_code: str, store_name: str):
 					store_row.shopify_variant_id,
 					product_data,
 					variant_data,
-					metafields_data
+					metafields_data,
 				)
 			else:
 				# Create new product
@@ -127,22 +127,20 @@ def sync_item_to_store(item_code: str, store_name: str):
 				status="Success",
 				method="sync_item_to_store",
 				shopify_store=store_name,
-				message=f"Synced item {item_code} to Shopify product {product.id}"
+				message=f"Synced item {item_code} to Shopify product {product.id}",
+				reference_doctype="Item",
+				reference_name=item_code,
 			)
 
-	except Exception as e:
-		frappe.log_error(
-			title=f"Shopify Product Sync Error - {store_name}",
-			message=f"Failed to sync item {item_code}: {str(e)}"
-		)
-		frappe.db.commit()
-
+	except Exception:
 		create_shopify_log(
 			status="Error",
 			method="sync_item_to_store",
 			shopify_store=store_name,
-			exception=str(e),
-			message=f"Failed to sync item {item_code}"
+			exception=frappe.get_traceback(),
+			message=f"Failed to sync item {item_code}",
+			reference_doctype="Item",
+			reference_name=item_code,
 		)
 
 
@@ -153,9 +151,7 @@ def _init_shopify_api_versions():
 
 
 def _create_shopify_product(
-	product_data: Dict[str, Any],
-	variant_data: Dict[str, Any],
-	metafields_data: List[Dict[str, Any]]
+	product_data: Dict[str, Any], variant_data: Dict[str, Any], metafields_data: List[Dict[str, Any]]
 ) -> Product:
 	"""
 	Create a new product in Shopify.
@@ -168,29 +164,36 @@ def _create_shopify_product(
 	Returns:
 		Created Product resource
 	"""
-	# Combine product and variant data
-	full_data = {**product_data}
-	if variant_data:
-		full_data["variants"] = [variant_data]
-
+	# Create product with product-level data only (no variants)
+	# Shopify auto-creates a default variant when product is saved
 	product = Product()
-	for key, value in full_data.items():
+	for key, value in product_data.items():
 		setattr(product, key, value)
 
 	if not product.save():
 		raise Exception(f"Failed to create product: {product.errors.full_messages()}")
 
+	# Update default variant with variant-level data (sku, price, inventory_management, etc.)
+	if variant_data and product.variants:
+		default_variant = product.variants[0]
+		for key, value in variant_data.items():
+			setattr(default_variant, key, value)
+		if not default_variant.save():
+			raise Exception(f"Failed to update variant: {default_variant.errors.full_messages()}")
+
 	# Create metafields if any
 	if metafields_data and product.id:
 		for mf_data in metafields_data:
-			metafield = Metafield({
-				"namespace": mf_data["namespace"],
-				"key": mf_data["key"],
-				"value": mf_data["value"],
-				"type": mf_data["type"],
-				"owner_resource": "product",
-				"owner_id": product.id
-			})
+			metafield = Metafield(
+				{
+					"namespace": mf_data["namespace"],
+					"key": mf_data["key"],
+					"value": mf_data["value"],
+					"type": mf_data["type"],
+					"owner_resource": "product",
+					"owner_id": product.id,
+				}
+			)
 			metafield.save()
 
 	return product
@@ -201,7 +204,7 @@ def _update_shopify_product(
 	variant_id: Optional[str],
 	product_data: Dict[str, Any],
 	variant_data: Dict[str, Any],
-	metafields_data: List[Dict[str, Any]]
+	metafields_data: List[Dict[str, Any]],
 ) -> Product:
 	"""
 	Update an existing product in Shopify.
@@ -253,14 +256,16 @@ def _update_shopify_product(
 				mf.save()
 			else:
 				# Create new metafield
-				metafield = Metafield({
-					"namespace": mf_data["namespace"],
-					"key": mf_data["key"],
-					"value": mf_data["value"],
-					"type": mf_data["type"],
-					"owner_resource": "product",
-					"owner_id": product_id
-				})
+				metafield = Metafield(
+					{
+						"namespace": mf_data["namespace"],
+						"key": mf_data["key"],
+						"value": mf_data["value"],
+						"type": mf_data["type"],
+						"owner_resource": "product",
+						"owner_id": product_id,
+					}
+				)
 				metafield.save()
 
 	return product
@@ -294,19 +299,22 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str):
 				"last_sync_at": now_datetime(),
 				"last_sync_hash": sync_hash,
 			},
-			update_modified=False
+			update_modified=False,
 		)
 	else:
 		# Create new row
 		item.reload()
-		item.append("shopify_stores", {
-			"shopify_store": store.name,
-			"enabled": 1,
-			"shopify_product_id": str(product.id),
-			"shopify_variant_id": variant_id,
-			"last_sync_at": now_datetime(),
-			"last_sync_hash": sync_hash,
-		})
+		item.append(
+			"shopify_stores",
+			{
+				"shopify_store": store.name,
+				"enabled": 1,
+				"shopify_product_id": str(product.id),
+				"shopify_variant_id": variant_id,
+				"last_sync_at": now_datetime(),
+				"last_sync_hash": sync_hash,
+			},
+		)
 		item.flags.ignore_validate = True
 		item.flags.ignore_mandatory = True
 		item.save(ignore_permissions=True)
@@ -354,12 +362,14 @@ def build_product_payload(item, store) -> tuple:
 				variant_data[shopify_field] = value
 
 		elif field_type == "Metafield":
-			metafields_data.append({
-				"namespace": field_map.metafield_namespace,
-				"key": field_map.metafield_key,
-				"value": str(value),
-				"type": field_map.metafield_type or "single_line_text_field"
-			})
+			metafields_data.append(
+				{
+					"namespace": field_map.metafield_namespace,
+					"key": field_map.metafield_key,
+					"value": str(value),
+					"type": field_map.metafield_type or "single_line_text_field",
+				}
+			)
 
 	return product_data, variant_data, metafields_data
 
@@ -412,7 +422,7 @@ def get_item_price(item, store) -> Optional[float]:
 			"price_list": store.price_list,
 			"selling": 1,
 		},
-		"price_list_rate"
+		"price_list_rate",
 	)
 
 	return price
@@ -458,9 +468,7 @@ def sync_items_to_store(store_name: str):
 
 	# Get all items that have this store in shopify_stores
 	items_with_store = frappe.get_all(
-		"Item Shopify Store",
-		filters={"shopify_store": store_name, "enabled": 1},
-		pluck="parent"
+		"Item Shopify Store", filters={"shopify_store": store_name, "enabled": 1}, pluck="parent"
 	)
 
 	# Also get items that match store filters but don't have explicit row
@@ -472,6 +480,7 @@ def sync_items_to_store(store_name: str):
 				item = frappe.get_doc("Item", item_code)
 				# Check if item matches filters (using existing utility)
 				from nexwave_shopify_connector.nexwave_shopify.utils import is_item_eligible_for_store
+
 				if is_item_eligible_for_store(item, store):
 					items_with_store.append(item_code)
 
@@ -493,6 +502,5 @@ def sync_items_to_store(store_name: str):
 		)
 
 	frappe.msgprint(
-		_("Queued {0} items for sync to {1}").format(len(items_to_sync), store_name),
-		indicator="green"
+		_("Queued {0} items for sync to {1}").format(len(items_to_sync), store_name), indicator="green"
 	)

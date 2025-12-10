@@ -50,13 +50,8 @@ def create_shopify_log(
 		"request_data": json.dumps(request_data, indent=2) if request_data else None,
 		"response_data": json.dumps(response_data, indent=2) if response_data else None,
 		"message": message,
-		"traceback": None,
+		"traceback": exception,
 	})
-
-	if exception:
-		log.status = "Error"
-		log.message = str(exception)
-		log.traceback = frappe.get_traceback() if frappe.local.flags.in_test is not True else None
 
 	log.insert(ignore_permissions=True)
 	frappe.db.commit()

@@ -5,7 +5,7 @@
 		"dt": "Item",
 		"fieldname": "shopify_stores_section",
 		"fieldtype": "Section Break",
-		"insert_after": "stock_uom",
+		"insert_after": "uoms",
 		"label": "Shopify Stores"
 	},
 	{

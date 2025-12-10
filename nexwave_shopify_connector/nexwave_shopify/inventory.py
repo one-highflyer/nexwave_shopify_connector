@@ -22,11 +22,7 @@ def update_inventory_on_shopify():
 	inventory_sync_frequency to determine if it's time to sync.
 	"""
 	# Get all stores with inventory sync enabled
-	stores = frappe.get_all(
-		"Shopify Store",
-		filters={"enabled": 1, "enable_inventory_sync": 1},
-		pluck="name"
-	)
+	stores = frappe.get_all("Shopify Store", filters={"enabled": 1, "enable_inventory_sync": 1}, pluck="name")
 
 	for store_name in stores:
 		store = frappe.get_doc("Shopify Store", store_name)
@@ -79,7 +75,7 @@ def sync_store_inventory(store_name: str):
 	if not store.warehouse_mapping:
 		frappe.log_error(
 			title=f"Shopify Inventory Sync - {store_name}",
-			message="No warehouse mappings configured for inventory sync"
+			message="No warehouse mappings configured for inventory sync",
 		)
 		return
 
@@ -93,7 +89,7 @@ def sync_store_inventory(store_name: str):
 	if not access_token:
 		frappe.log_error(
 			title=f"Shopify Inventory Sync Error - {store_name}",
-			message=f"Access token not configured for store {store_name}"
+			message=f"Access token not configured for store {store_name}",
 		)
 		return
 
@@ -128,7 +124,7 @@ def sync_store_inventory(store_name: str):
 						request_data={
 							"item_code": item_data["item_code"],
 							"shopify_variant_id": item_data.get("shopify_variant_id"),
-						}
+						},
 					)
 
 		# Update last sync time
@@ -147,21 +143,21 @@ def sync_store_inventory(store_name: str):
 			status=status,
 			method="sync_store_inventory",
 			shopify_store=store_name,
-			message=f"Synced inventory for {sync_count} items" + (f" ({error_count} errors)" if error_count else "")
+			message=f"Synced inventory for {sync_count} items"
+			+ (f" ({error_count} errors)" if error_count else ""),
+			reference_doctype="Shopify Store",
+			reference_name=store_name,
 		)
 
 	except Exception as e:
-		frappe.log_error(
-			title=f"Shopify Inventory Sync Error - {store_name}",
-			message=f"Store-level sync error: {str(e)}"
-		)
-		frappe.db.commit()
-
 		create_shopify_log(
 			status="Error",
 			method="sync_store_inventory",
 			shopify_store=store_name,
-			exception=str(e)
+			message=f"Store-level sync error: {str(e)}",
+			exception=frappe.get_traceback(),
+			reference_doctype="Shopify Store",
+			reference_name=store_name,
 		)
 
 
@@ -197,7 +193,7 @@ def get_items_with_shopify_ids(store_name: str) -> List[Dict]:
 			AND item.disabled = 0
 		""",
 		(store_name,),
-		as_dict=True
+		as_dict=True,
 	)
 
 
@@ -211,9 +207,10 @@ def _sync_item_inventory(item_data: Dict, store):
 	"""
 	item_code = item_data["item_code"]
 	variant_id = item_data["shopify_variant_id"]
+	product_id = item_data["shopify_product_id"]
 
 	# Get inventory_item_id from variant
-	variant = Variant.find(variant_id)
+	variant = Variant.find(variant_id, product_id=product_id)
 	if not variant or not variant.inventory_item_id:
 		raise Exception(f"Could not get inventory_item_id for variant {variant_id}")
 
@@ -245,11 +242,7 @@ def get_stock_qty(item_code: str, warehouse: str) -> float:
 	Returns:
 		Actual quantity (0 if no bin exists)
 	"""
-	qty = frappe.db.get_value(
-		"Bin",
-		{"item_code": item_code, "warehouse": warehouse},
-		"actual_qty"
-	)
+	qty = frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty")
 	return qty or 0
 
 
@@ -266,11 +259,7 @@ def _set_inventory_level(location_id: str, inventory_item_id: str, qty: float):
 	qty = int(qty)
 
 	# Use the set endpoint to set absolute quantity
-	InventoryLevel.set(
-		location_id=location_id,
-		inventory_item_id=inventory_item_id,
-		available=qty
-	)
+	InventoryLevel.set(location_id=location_id, inventory_item_id=inventory_item_id, available=qty)
 
 
 def sync_single_item_inventory(item_code: str, store_name: Optional[str] = None):
@@ -295,12 +284,8 @@ def sync_single_item_inventory(item_code: str, store_name: Optional[str] = None)
 		# Get all stores this item is linked to
 		store_names = frappe.get_all(
 			"Item Shopify Store",
-			filters={
-				"parent": item_code,
-				"enabled": 1,
-				"shopify_variant_id": ["is", "set"]
-			},
-			pluck="shopify_store"
+			filters={"parent": item_code, "enabled": 1, "shopify_variant_id": ["is", "set"]},
+			pluck="shopify_store",
 		)
 		stores = [frappe.get_doc("Shopify Store", name) for name in store_names]
 
@@ -329,16 +314,13 @@ def sync_single_item_inventory(item_code: str, store_name: Optional[str] = None)
 
 		try:
 			with Session.temp(store.shop_domain, api_version, access_token):
-				item_data = {
-					"item_code": item_code,
-					"shopify_variant_id": store_row.shopify_variant_id
-				}
+				item_data = {"item_code": item_code, "shopify_variant_id": store_row.shopify_variant_id}
 				_sync_item_inventory(item_data, store)
 
 		except Exception as e:
 			frappe.log_error(
 				title=f"Shopify Inventory Sync Error - {store.name}",
-				message=f"Failed to sync inventory for {item_code}: {str(e)}"
+				message=f"Failed to sync inventory for {item_code}: {str(e)}",
 			)
 
 
@@ -370,7 +352,4 @@ def manual_inventory_sync(store_name: str):
 		store_name=store_name,
 	)
 
-	frappe.msgprint(
-		_("Inventory sync has been queued for {0}").format(store_name),
-		indicator="green"
-	)
+	frappe.msgprint(_("Inventory sync has been queued for {0}").format(store_name), indicator="green")
