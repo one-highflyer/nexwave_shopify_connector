@@ -98,7 +98,7 @@
   {
    "fieldname": "section_break_erpnext",
    "fieldtype": "Section Break",
-   "label": "ERPNext Settings"
+   "label": "NexWave Settings"
   },
   {
    "fieldname": "company",
@@ -255,7 +255,7 @@
    "label": "Collection Mapping"
   },
   {
-   "description": "Map ERPNext field values to Shopify Collections",
+   "description": "Map NexWave field values to Shopify Collections",
    "fieldname": "collection_mapping",
    "fieldtype": "Table",
    "label": "Collection Mapping",
@@ -311,7 +311,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-10 23:52:28.104255",
+ "modified": "2025-12-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

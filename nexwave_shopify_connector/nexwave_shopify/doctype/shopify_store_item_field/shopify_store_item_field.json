@@ -1,6 +1,6 @@
 {
  "actions": [],
- "creation": "2025-11-28 12:00:00.000000",
+ "creation": "2025-11-28 12:00:00",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -17,12 +17,12 @@
  ],
  "fields": [
   {
+   "description": "Field name from Item DocType (e.g., description, brand, custom_color)",
    "fieldname": "erpnext_field",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "ERPNext Field",
-   "reqd": 1,
-   "description": "Field name from Item DocType (e.g., description, brand, custom_color)"
+   "label": "NexWave Field",
+   "reqd": 1
   },
   {
    "fieldname": "shopify_field_type",
@@ -46,17 +46,19 @@
   },
   {
    "depends_on": "eval:doc.shopify_field_type=='Metafield'",
+   "description": "e.g., custom, specifications",
    "fieldname": "metafield_namespace",
    "fieldtype": "Data",
-   "label": "Metafield Namespace",
-   "description": "e.g., custom, specifications"
+   "in_list_view": 1,
+   "label": "Metafield Namespace"
   },
   {
    "depends_on": "eval:doc.shopify_field_type=='Metafield'",
+   "description": "e.g., color, material",
    "fieldname": "metafield_key",
    "fieldtype": "Data",
-   "label": "Metafield Key",
-   "description": "e.g., color, material"
+   "in_list_view": 1,
+   "label": "Metafield Key"
   },
   {
    "depends_on": "eval:doc.shopify_field_type=='Metafield'",
@@ -70,21 +72,22 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Used when NexWave field is empty",
    "fieldname": "default_value",
    "fieldtype": "Data",
-   "label": "Default Value",
-   "description": "Used when ERPNext field is empty"
+   "label": "Default Value"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-28 12:00:00.000000",
+ "modified": "2025-12-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store Item Field",
  "owner": "Administrator",
  "permissions": [],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []
