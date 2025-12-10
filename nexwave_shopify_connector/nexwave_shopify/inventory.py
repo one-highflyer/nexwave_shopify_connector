@@ -116,20 +116,38 @@ def sync_store_inventory(store_name: str):
 					sync_count += 1
 				except Exception as e:
 					error_count += 1
-					frappe.log_error(
-						title=f"Shopify Inventory Sync Error - {store_name}",
-						message=f"Failed to sync inventory for {item_data['item_code']}: {str(e)}"
+					# Log individual item failure to NexWave Shopify Log
+					create_shopify_log(
+						status="Error",
+						method="sync_item_inventory",
+						shopify_store=store_name,
+						message=f"Failed to sync inventory for {item_data['item_code']}",
+						exception=str(e),
+						reference_doctype="Item",
+						reference_name=item_data["item_code"],
+						request_data={
+							"item_code": item_data["item_code"],
+							"shopify_variant_id": item_data.get("shopify_variant_id"),
+						}
 					)
 
 		# Update last sync time
 		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
 		frappe.db.commit()
 
+		# Determine overall status
+		if error_count > 0 and sync_count == 0:
+			status = "Error"  # Complete failure
+		elif error_count > 0:
+			status = "Warning"  # Partial success
+		else:
+			status = "Success"  # All items synced
+
 		create_shopify_log(
-			status="Success",
+			status=status,
 			method="sync_store_inventory",
 			shopify_store=store_name,
-			message=f"Synced inventory for {sync_count} items ({error_count} errors)"
+			message=f"Synced inventory for {sync_count} items" + (f" ({error_count} errors)" if error_count else "")
 		)
 
 	except Exception as e:
