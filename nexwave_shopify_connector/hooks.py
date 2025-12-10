@@ -50,7 +50,11 @@ doc_events = {
 	"Item": {
 		"on_update": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_shopify",
 		"after_insert": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_shopify",
-	}
+	},
+	"Item Price": {
+		"on_update": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_price_to_shopify",
+		"after_insert": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_price_to_shopify",
+	},
 }
 
 # Scheduled Tasks

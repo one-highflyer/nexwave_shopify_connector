@@ -1,15 +1,17 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
+import base64
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List, Optional, Tuple
 
 import frappe
 from frappe import _
 from frappe.utils import now_datetime
 from shopify.api_version import ApiVersion
-from shopify.resources import Metafield, Product, Variant
+from shopify.resources import Image, Metafield, Product, Variant
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
@@ -63,6 +65,59 @@ def sync_item_to_shopify(doc, method=None):
 			item_code=doc.name,
 			store_name=store.name,
 		)
+
+
+def sync_item_price_to_shopify(doc, method=None):
+	"""
+	Doc event handler - sync item when its price changes.
+
+	Called on Item Price on_update and after_insert events.
+
+	Args:
+		doc: Item Price document
+		method: Event method name
+	"""
+	# Skip if in test mode or import
+	if frappe.flags.in_test or frappe.flags.in_import:
+		return
+
+	# Only sync selling prices
+	if not doc.selling:
+		return
+
+	item_code = doc.item_code
+	price_list = doc.price_list
+
+	# Find stores that use this price list
+	stores = frappe.get_all(
+		"Shopify Store",
+		filters={
+			"enabled": 1,
+			"enable_item_sync": 1,
+			"update_shopify_on_item_update": 1,
+			"price_list": price_list,
+		},
+		pluck="name",
+	)
+
+	if not stores:
+		return
+
+	# Check if item is linked to any of these stores
+	for store_name in stores:
+		# Check if item has this store enabled
+		has_store = frappe.db.exists(
+			"Item Shopify Store", {"parent": item_code, "shopify_store": store_name, "enabled": 1}
+		)
+
+		if has_store:
+			frappe.enqueue(
+				"nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_store",
+				queue="short",
+				timeout=300,
+				item_code=item_code,
+				store_name=store_name,
+			)
 
 
 def sync_item_to_store(item_code: str, store_name: str):
@@ -120,8 +175,13 @@ def sync_item_to_store(item_code: str, store_name: str):
 				# Create new product
 				product = _create_shopify_product(product_data, variant_data, metafields_data)
 
+			# Sync image if enabled
+			image_hash = None
+			if store.enable_image_sync:
+				image_hash = _sync_item_image_to_shopify(item, store, product.id, store_row)
+
 			# Update Item Shopify Store row
-			_update_item_shopify_store_row(item, store, product, current_hash)
+			_update_item_shopify_store_row(item, store, product, current_hash, image_hash)
 
 			create_shopify_log(
 				status="Success",
@@ -271,7 +331,7 @@ def _update_shopify_product(
 	return product
 
 
-def _update_item_shopify_store_row(item, store, product, sync_hash: str):
+def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_hash: Optional[str] = None):
 	"""
 	Update or create Item Shopify Store child row with sync details.
 
@@ -280,6 +340,7 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str):
 		store: Shopify Store document
 		product: Shopify Product resource
 		sync_hash: Current sync hash
+		image_hash: Current image hash (optional)
 	"""
 	store_row = get_item_shopify_store_row(item, store)
 
@@ -288,33 +349,34 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str):
 	if product.variants:
 		variant_id = str(product.variants[0].id)
 
+	update_data = {
+		"shopify_product_id": str(product.id),
+		"shopify_variant_id": variant_id,
+		"last_sync_at": now_datetime(),
+		"last_sync_hash": sync_hash,
+	}
+
+	# Only update image hash if provided
+	if image_hash is not None:
+		update_data["last_image_hash"] = image_hash
+
 	if store_row:
 		# Update existing row
 		frappe.db.set_value(
 			"Item Shopify Store",
 			store_row.name,
-			{
-				"shopify_product_id": str(product.id),
-				"shopify_variant_id": variant_id,
-				"last_sync_at": now_datetime(),
-				"last_sync_hash": sync_hash,
-			},
+			update_data,
 			update_modified=False,
 		)
 	else:
 		# Create new row
+		row_data = {
+			"shopify_store": store.name,
+			"enabled": 1,
+			**update_data,
+		}
 		item.reload()
-		item.append(
-			"shopify_stores",
-			{
-				"shopify_store": store.name,
-				"enabled": 1,
-				"shopify_product_id": str(product.id),
-				"shopify_variant_id": variant_id,
-				"last_sync_at": now_datetime(),
-				"last_sync_hash": sync_hash,
-			},
-		)
+		item.append("shopify_stores", row_data)
 		item.flags.ignore_validate = True
 		item.flags.ignore_mandatory = True
 		item.save(ignore_permissions=True)
@@ -450,6 +512,148 @@ def compute_sync_hash(item, store) -> str:
 	# Create deterministic hash
 	hash_str = json.dumps(hash_data, sort_keys=True)
 	return hashlib.md5(hash_str.encode()).hexdigest()
+
+
+def _get_item_image_path(item) -> Optional[str]:
+	"""
+	Get the file path for item's primary image.
+
+	Args:
+		item: Item document
+
+	Returns:
+		Absolute file path or None
+	"""
+	if not item.image:
+		return None
+
+	# Item.image contains URL like /files/item-image.jpg or /private/files/item-image.jpg
+	image_url = item.image
+
+	# Determine if public or private file
+	if image_url.startswith("/private/files/"):
+		file_path = frappe.get_site_path("private", "files", image_url.replace("/private/files/", ""))
+	elif image_url.startswith("/files/"):
+		file_path = frappe.get_site_path("public", "files", image_url.replace("/files/", ""))
+	else:
+		# Could be full URL or other format
+		return None
+
+	if os.path.exists(file_path):
+		return file_path
+
+	return None
+
+
+def _compute_image_hash(file_path: str) -> str:
+	"""
+	Compute MD5 hash of image file content.
+
+	Args:
+		file_path: Absolute path to image file
+
+	Returns:
+		MD5 hash string
+	"""
+	hash_md5 = hashlib.md5()
+	with open(file_path, "rb") as f:
+		for chunk in iter(lambda: f.read(4096), b""):
+			hash_md5.update(chunk)
+	return hash_md5.hexdigest()
+
+
+def _get_image_data_and_hash(item) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+	"""
+	Get base64 encoded image data and hash for an item.
+
+	Args:
+		item: Item document
+
+	Returns:
+		Tuple of (base64_data, image_hash, filename) or (None, None, None)
+	"""
+	file_path = _get_item_image_path(item)
+	if not file_path:
+		return None, None, None
+
+	try:
+		image_hash = _compute_image_hash(file_path)
+
+		with open(file_path, "rb") as f:
+			image_data = base64.b64encode(f.read()).decode("utf-8")
+
+		filename = os.path.basename(file_path)
+		return image_data, image_hash, filename
+	except Exception:
+		frappe.log_error(
+			title="Image Read Error",
+			message=f"Failed to read image file: {file_path}\n{frappe.get_traceback()}",
+		)
+		return None, None, None
+
+
+def _sync_product_image(product_id: str, image_data: str, filename: str) -> bool:
+	"""
+	Upload image to Shopify product using base64 attachment.
+
+	Args:
+		product_id: Shopify product ID
+		image_data: Base64 encoded image data
+		filename: Image filename
+
+	Returns:
+		True if successful, False otherwise
+	"""
+	# First, delete existing images to avoid duplicates
+	existing_images = Image.find(product_id=product_id)
+	for img in existing_images:
+		img.destroy()
+
+	# Create new image
+	image = Image()
+	image.product_id = product_id
+	image.attachment = image_data
+	image.filename = filename
+
+	if not image.save():
+		raise Exception(f"Failed to upload image: {image.errors.full_messages()}")
+
+	return True
+
+
+def _sync_item_image_to_shopify(item, store, product_id: str, store_row) -> Optional[str]:
+	"""
+	Sync item image to Shopify product if image has changed.
+
+	Args:
+		item: Item document
+		store: Shopify Store document
+		product_id: Shopify product ID
+		store_row: Item Shopify Store row (or None)
+
+	Returns:
+		New image hash if synced, None otherwise
+	"""
+	image_data, image_hash, filename = _get_image_data_and_hash(item)
+
+	if not image_data:
+		return None
+
+	# Check if image has changed
+	last_image_hash = store_row.last_image_hash if store_row else None
+	if last_image_hash == image_hash:
+		# Image unchanged, return existing hash
+		return image_hash
+
+	try:
+		_sync_product_image(str(product_id), image_data, filename)
+		return image_hash
+	except Exception:
+		frappe.log_error(
+			title=f"Shopify Image Sync Error - {store.name}",
+			message=f"Failed to sync image for item {item.name}\n{frappe.get_traceback()}",
+		)
+		return None
 
 
 def sync_items_to_store(store_name: str):
