@@ -5,7 +5,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from shopify.api_version import ApiVersion
-from shopify.resources import Location, Shop
+from shopify.resources import CustomCollection, Location, Shop, SmartCollection
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
@@ -70,6 +70,7 @@ class ShopifyStore(Document):
 		warehouse: DF.Link | None
 		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
 		webhooks: DF.Table[ShopifyStoreWebhook]
+
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
@@ -81,7 +82,7 @@ class ShopifyStore(Document):
 			# Remove protocol
 			for prefix in ["https://", "http://"]:
 				if domain.startswith(prefix):
-					domain = domain[len(prefix):]
+					domain = domain[len(prefix) :]
 			# Remove trailing slash
 			domain = domain.rstrip("/")
 			# Remove /admin suffix
@@ -119,26 +120,28 @@ class ShopifyStore(Document):
 				shop = Shop.current()
 
 				frappe.msgprint(
-					_("Connection successful!") + "<br><br>"
-					+ _("<b>Shop Name:</b> {0}").format(shop.name) + "<br>"
-					+ _("<b>Domain:</b> {0}").format(shop.domain) + "<br>"
-					+ _("<b>Email:</b> {0}").format(shop.email) + "<br>"
-					+ _("<b>Currency:</b> {0}").format(shop.currency) + "<br>"
+					_("Connection successful!")
+					+ "<br><br>"
+					+ _("<b>Shop Name:</b> {0}").format(shop.name)
+					+ "<br>"
+					+ _("<b>Domain:</b> {0}").format(shop.domain)
+					+ "<br>"
+					+ _("<b>Email:</b> {0}").format(shop.email)
+					+ "<br>"
+					+ _("<b>Currency:</b> {0}").format(shop.currency)
+					+ "<br>"
 					+ _("<b>Plan:</b> {0}").format(shop.plan_name),
 					title=_("Shopify Connection Test"),
-					indicator="green"
+					indicator="green",
 				)
 
 		except Exception as e:
 			frappe.log_error(
 				message=frappe.get_traceback(),
-				title=_("Shopify Connection Test Failed - {0}").format(self.shop_domain)
+				title=_("Shopify Connection Test Failed - {0}").format(self.shop_domain),
 			)
 			frappe.db.commit()
-			frappe.throw(
-				_("Connection failed: {0}").format(str(e)),
-				title=_("Shopify Connection Error")
-			)
+			frappe.throw(_("Connection failed: {0}").format(str(e)), title=_("Shopify Connection Error"))
 
 	@frappe.whitelist()
 	def fetch_shopify_locations(self):
@@ -153,24 +156,28 @@ class ShopifyStore(Document):
 				locations = Location.find()
 
 				# Build existing mappings lookup to preserve ERPNext warehouse selections
-				existing_mappings = {row.shopify_location_id: row.erpnext_warehouse for row in self.warehouse_mapping}
+				existing_mappings = {
+					row.shopify_location_id: row.erpnext_warehouse for row in self.warehouse_mapping
+				}
 
 				# Build locations list to return
 				locations_data = []
 				for location in locations:
 					location_id = str(location.id)
-					locations_data.append({
-						"shopify_location_id": location_id,
-						"shopify_location_name": location.name,
-						"erpnext_warehouse": existing_mappings.get(location_id) or ""
-					})
+					locations_data.append(
+						{
+							"shopify_location_id": location_id,
+							"shopify_location_name": location.name,
+							"erpnext_warehouse": existing_mappings.get(location_id) or "",
+						}
+					)
 
 				frappe.msgprint(
 					_("Successfully fetched {0} location(s) from Shopify.").format(len(locations_data))
 					+ "<br><br>"
 					+ _("Please map each Shopify location to an ERPNext warehouse and save the document."),
 					title=_("Shopify Locations"),
-					indicator="green"
+					indicator="green",
 				)
 
 				return locations_data
@@ -178,13 +185,10 @@ class ShopifyStore(Document):
 		except Exception as e:
 			frappe.log_error(
 				message=frappe.get_traceback(),
-				title=_("Fetch Shopify Locations Failed - {0}").format(self.shop_domain)
+				title=_("Fetch Shopify Locations Failed - {0}").format(self.shop_domain),
 			)
 			frappe.db.commit()
-			frappe.throw(
-				_("Failed to fetch locations: {0}").format(str(e)),
-				title=_("Shopify Error")
-			)
+			frappe.throw(_("Failed to fetch locations: {0}").format(str(e)), title=_("Shopify Error"))
 
 	@frappe.whitelist()
 	def fetch_products_and_map_by_sku(self):
@@ -208,6 +212,7 @@ class ShopifyStore(Document):
 			frappe.throw(_("Item sync is not enabled for this store"))
 
 		from nexwave_shopify_connector.nexwave_shopify.product import sync_items_to_store
+
 		sync_items_to_store(self.name)
 
 	@frappe.whitelist()
@@ -218,4 +223,68 @@ class ShopifyStore(Document):
 		Syncs inventory levels for all items that have Shopify product/variant IDs.
 		"""
 		from nexwave_shopify_connector.nexwave_shopify.inventory import manual_inventory_sync
+
 		manual_inventory_sync(self.name)
+
+	@frappe.whitelist()
+	def fetch_shopify_collections(self):
+		"""
+		Fetch all collections (custom and smart) from Shopify.
+
+		Returns collection data for JS to populate the collection_mapping table.
+		Preserves existing field_value mappings where possible.
+		"""
+		try:
+			self._init_shopify_api_versions()
+			auth_details = self._get_auth_details()
+
+			with Session.temp(*auth_details):
+				# Fetch both custom collections and smart collections
+				custom_collections = CustomCollection.find()
+				smart_collections = SmartCollection.find()
+
+				# Build existing mappings lookup to preserve field_value mappings
+				existing_mappings = {}
+				for row in self.collection_mapping:
+					existing_mappings[row.shopify_collection_id] = row.field_value
+
+				# Build collections list to return
+				collections_data = []
+
+				for collection in custom_collections:
+					collection_id = str(collection.id)
+					collections_data.append(
+						{
+							"shopify_collection_id": collection_id,
+							"shopify_collection_title": collection.title,
+							"field_value": existing_mappings.get(collection_id) or collection.title,
+						}
+					)
+
+				for collection in smart_collections:
+					collection_id = str(collection.id)
+					collections_data.append(
+						{
+							"shopify_collection_id": collection_id,
+							"shopify_collection_title": f"{collection.title} (Smart)",
+							"field_value": existing_mappings.get(collection_id) or collection.title,
+						}
+					)
+
+				frappe.msgprint(
+					_("Successfully fetched {0} collection(s) from Shopify.").format(len(collections_data))
+					+ "<br><br>"
+					+ _("Review the Field Value for each collection, then save the document."),
+					title=_("Shopify Collections"),
+					indicator="green",
+				)
+
+				return collections_data
+
+		except Exception as e:
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("Fetch Shopify Collections Failed - {0}").format(self.shop_domain),
+			)
+			frappe.db.commit()
+			frappe.throw(_("Failed to fetch collections: {0}").format(str(e)), title=_("Shopify Error"))

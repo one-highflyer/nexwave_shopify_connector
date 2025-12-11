@@ -54,6 +54,32 @@ frappe.ui.form.on("Shopify Store", {
 				);
 			}, __("Actions"));
 
+			frm.add_custom_button(__("Fetch Shopify Collections"), function() {
+				frm.call({
+					method: "fetch_shopify_collections",
+					doc: frm.doc,
+					freeze: true,
+					freeze_message: __("Fetching collections..."),
+					callback: function(r) {
+						if (r.message) {
+							// Clear existing rows
+							frm.clear_table("collection_mapping");
+
+							// Add fetched collections to the table
+							r.message.forEach(function(collection) {
+								let row = frm.add_child("collection_mapping");
+								row.shopify_collection_id = collection.shopify_collection_id;
+								row.shopify_collection_title = collection.shopify_collection_title;
+								row.field_value = collection.field_value;
+							});
+
+							// Refresh the field to show updated data
+							frm.refresh_field("collection_mapping");
+						}
+					}
+				});
+			}, __("Actions"));
+
 			// Sync buttons - only show when relevant settings are enabled
 			if (frm.doc.enabled && frm.doc.enable_item_sync) {
 				frm.add_custom_button(__("Sync All Items"), function() {

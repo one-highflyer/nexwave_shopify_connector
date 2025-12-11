@@ -11,7 +11,7 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 from shopify.api_version import ApiVersion
-from shopify.resources import Image, Metafield, Product, Variant
+from shopify.resources import Collect, CustomCollection, Image, Metafield, Product, Variant
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
@@ -195,7 +195,13 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 	try:
 		with Session.temp(store.shop_domain, api_version, access_token):
 			# Build product payload
-			product_data, variant_data, metafields_data = build_product_payload(item, store)
+			product_data, variant_data, metafields_data, category_value, collections_field = (
+				build_product_payload(item, store)
+			)
+
+			# Add category to product data if specified
+			if category_value:
+				product_data["product_category"] = {"product_taxonomy_node_id": str(category_value)}
 
 			if store_row and store_row.shopify_product_id:
 				# Update existing product
@@ -209,6 +215,10 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 			else:
 				# Create new product
 				product = _create_shopify_product(product_data, variant_data, metafields_data)
+
+			# Sync collections if mapping configured
+			if collections_field:
+				_sync_product_collections(str(product.id), item, store, collections_field)
 
 			# Sync image if enabled
 			image_hash = None
@@ -428,13 +438,15 @@ def build_product_payload(item, store) -> tuple:
 		store: Shopify Store document
 
 	Returns:
-		Tuple of (product_data, variant_data, metafields_data)
+		Tuple of (product_data, variant_data, metafields_data, category_value, collections_field)
 	"""
 	product_data = {"title": item.item_name or item.name}
 	variant_data = {
 		"sku": item.name,  # Use item_code as SKU (matches ecommerce_integrations pattern)
 	}
 	metafields_data = []
+	category_value = None
+	collections_field = None
 
 	# Enable inventory tracking for stock items
 	if item.is_stock_item:
@@ -448,17 +460,23 @@ def build_product_payload(item, store) -> tuple:
 		# Get value from item
 		value = _get_field_value(item, store, erpnext_field, field_map.default_value)
 
-		if value is None:
-			continue
-
 		if field_type == "Standard Field":
 			shopify_field = field_map.shopify_standard_field
-			if shopify_field in PRODUCT_STANDARD_FIELDS:
-				product_data[shopify_field] = value
-			elif shopify_field in VARIANT_STANDARD_FIELDS:
-				variant_data[shopify_field] = value
 
-		elif field_type == "Metafield":
+			# Handle special fields that require separate processing
+			if shopify_field == "category":
+				if value:
+					category_value = value
+			elif shopify_field == "collections":
+				# Store field name for collection sync (processed separately)
+				collections_field = erpnext_field
+			elif value is not None:
+				if shopify_field in PRODUCT_STANDARD_FIELDS:
+					product_data[shopify_field] = value
+				elif shopify_field in VARIANT_STANDARD_FIELDS:
+					variant_data[shopify_field] = value
+
+		elif field_type == "Metafield" and value is not None:
 			metafields_data.append(
 				{
 					"namespace": field_map.metafield_namespace,
@@ -468,7 +486,7 @@ def build_product_payload(item, store) -> tuple:
 				}
 			)
 
-	return product_data, variant_data, metafields_data
+	return product_data, variant_data, metafields_data, category_value, collections_field
 
 
 def _get_field_value(item, store, field_name: str, default_value: Optional[str] = None):
@@ -525,6 +543,205 @@ def get_item_price(item, store) -> Optional[float]:
 	return price
 
 
+def _get_collection_values(item, field_name: str) -> list[str]:
+	"""
+	Get collection values from item field, handling different field types.
+
+	Supports:
+	- Table MultiSelect: Reads from child table
+	- Link/Data/Select: Single value
+	- Small Text: Comma-separated values
+
+	Args:
+		item: Item document
+		field_name: Field name on Item to read
+
+	Returns:
+		List of collection names/values
+	"""
+	meta = frappe.get_meta("Item")
+	field = meta.get_field(field_name)
+
+	if not field:
+		return []
+
+	if field.fieldtype == "Table MultiSelect":
+		# Get the link field from child table
+		child_meta = frappe.get_meta(field.options)
+		link_field = None
+		for f in child_meta.fields:
+			if f.fieldtype == "Link":
+				link_field = f.fieldname
+				break
+
+		if not link_field:
+			return []
+
+		values = []
+		for row in getattr(item, field_name, []) or []:
+			val = getattr(row, link_field, None)
+			if val:
+				values.append(val)
+		return values
+
+	elif field.fieldtype in ("Link", "Data", "Select"):
+		value = getattr(item, field_name, None)
+		return [value] if value else []
+
+	elif field.fieldtype in ("Small Text", "Text"):
+		value = getattr(item, field_name, None)
+		if value:
+			return [v.strip() for v in value.split(",") if v.strip()]
+		return []
+
+	return []
+
+
+def _create_shopify_collection_and_mapping(store, collection_name: str) -> str | None:
+	"""
+	Create a new collection on Shopify and add the mapping entry to the store.
+
+	Args:
+		store: Shopify Store document
+		collection_name: Name for the new collection
+
+	Returns:
+		Shopify collection ID if successful, None otherwise
+	"""
+	try:
+		# Create collection on Shopify
+		collection = CustomCollection()
+		collection.title = collection_name
+		if not collection.save():
+			frappe.log_error(
+				title=f"Collection Creation Error - {store.name}",
+				message=f"Failed to create collection '{collection_name}': {collection.errors.full_messages()}",
+			)
+			return None
+
+		collection_id = str(collection.id)
+
+		# Add mapping entry to store's collection_mapping table
+		store.reload()
+		store.append(
+			"collection_mapping",
+			{
+				"field_value": collection_name,
+				"shopify_collection_id": collection_id,
+				"shopify_collection_title": collection_name,
+			},
+		)
+		store.flags.ignore_validate = True
+		store.flags.ignore_mandatory = True
+		store.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		create_shopify_log(
+			status="Success",
+			method="_create_shopify_collection_and_mapping",
+			shopify_store=store.name,
+			message=f"Auto-created Shopify collection '{collection_name}' (ID: {collection_id})",
+			reference_doctype="Shopify Store",
+			reference_name=store.name,
+		)
+
+		return collection_id
+
+	except Exception as e:
+		frappe.log_error(
+			title=f"Collection Creation Error - {store.name}",
+			message=f"Failed to create collection '{collection_name}': {e}\n{frappe.get_traceback()}",
+		)
+		return None
+
+
+def _sync_product_collections(product_id: str, item, store, collections_field: str):
+	"""
+	Sync item to Shopify collections based on field values and collection mapping.
+
+	Uses Shopify SDK Collect resource for all API operations.
+	Adds product to new collections and removes from collections no longer assigned.
+	Auto-creates missing collections on Shopify and adds mapping entries.
+
+	Args:
+		product_id: Shopify product ID
+		item: Item document
+		store: Shopify Store document
+		collections_field: Name of the field on Item containing collection values
+	"""
+	if not collections_field:
+		return
+
+	# Get collection values from item (handles Table MultiSelect, Link, Data, etc.)
+	collection_values = _get_collection_values(item, collections_field)
+
+	if not collection_values:
+		return
+
+	# Build lookup from collection mapping table
+	# Key: field_value, Value: shopify_collection_id
+	collection_lookup = {}
+	for mapping in store.collection_mapping or []:
+		collection_id = mapping.shopify_collection_id
+		# Extract numeric ID from GID format if needed
+		if collection_id and collection_id.startswith("gid://"):
+			collection_id = collection_id.split("/")[-1]
+		if collection_id:
+			collection_lookup[mapping.field_value] = collection_id
+
+	# Find target Shopify collection IDs based on item's collection values
+	# Auto-create missing collections if not in mapping
+	target_collection_ids = set()
+	for value in collection_values:
+		if value in collection_lookup:
+			target_collection_ids.add(collection_lookup[value])
+		else:
+			# Collection not in mapping - create it on Shopify and add mapping
+			new_collection_id = _create_shopify_collection_and_mapping(store, value)
+			if new_collection_id:
+				target_collection_ids.add(new_collection_id)
+				# Update local lookup for this sync cycle
+				collection_lookup[value] = new_collection_id
+
+	# Get current product-collection relationships using SDK
+	try:
+		current_collects = Collect.find(product_id=product_id)
+	except Exception:
+		current_collects = []
+
+	current_collection_ids = {str(c.collection_id) for c in current_collects}
+
+	# ADD to new collections
+	for collection_id in target_collection_ids - current_collection_ids:
+		try:
+			collect = Collect()
+			collect.product_id = int(product_id)
+			collect.collection_id = int(collection_id)
+			if not collect.save():
+				frappe.log_error(
+					title=f"Collection Sync Error - {store.name}",
+					message=f"Failed to add product {product_id} to collection {collection_id}: {collect.errors.full_messages()}",
+				)
+		except Exception as e:
+			# Log but don't fail - collection might be a smart collection (403 error)
+			frappe.log_error(
+				title=f"Collection Sync Warning - {store.name}",
+				message=f"Could not add product {product_id} to collection {collection_id}: {e}",
+			)
+
+	# REMOVE from collections no longer in item
+	for collection_id in current_collection_ids - target_collection_ids:
+		for collect in current_collects:
+			if str(collect.collection_id) == collection_id:
+				try:
+					collect.destroy()
+				except Exception as e:
+					frappe.log_error(
+						title=f"Collection Remove Warning - {store.name}",
+						message=f"Could not remove product {product_id} from collection {collection_id}: {e}",
+					)
+
+
 def compute_sync_hash(item, store) -> str:
 	"""
 	Compute hash of item fields for change detection.
@@ -556,6 +773,16 @@ def compute_sync_hash(item, store) -> str:
 	elif store.enable_image_sync:
 		# No image set
 		hash_data["_image_hash"] = ""
+
+	# Include collection values in hash if collections mapping exists
+	for field_map in store.item_field_map:
+		if (
+			field_map.shopify_field_type == "Standard Field"
+			and field_map.shopify_standard_field == "collections"
+		):
+			collection_values = _get_collection_values(item, field_map.erpnext_field)
+			hash_data["_collections"] = ",".join(sorted(collection_values))
+			break
 
 	# Create deterministic hash
 	hash_str = json.dumps(hash_data, sort_keys=True)
