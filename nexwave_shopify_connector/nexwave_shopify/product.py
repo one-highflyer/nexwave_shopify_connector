@@ -690,13 +690,12 @@ def _sync_product_collections(product_id: str, item, store, collections_field: s
 			collection_lookup[mapping.field_value] = collection_id
 
 	# Find target Shopify collection IDs based on item's collection values
-	# Auto-create missing collections if not in mapping
 	target_collection_ids = set()
 	for value in collection_values:
 		if value in collection_lookup:
 			target_collection_ids.add(collection_lookup[value])
-		else:
-			# Collection not in mapping - create it on Shopify and add mapping
+		elif store.auto_create_collections:
+			# Auto-create missing collections only if enabled on store
 			new_collection_id = _create_shopify_collection_and_mapping(store, value)
 			if new_collection_id:
 				target_collection_ids.add(new_collection_id)

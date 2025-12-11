@@ -44,6 +44,7 @@
   "item_field_map",
   "section_break_collections",
   "collection_mapping",
+  "auto_create_collections",
   "section_break_filters",
   "item_filters",
   "section_break_taxes",
@@ -271,6 +272,13 @@
    "options": "Shopify Store Collection Mapping"
   },
   {
+   "default": "0",
+   "description": "Automatically create collections on Shopify when a collection value is not found in the mapping",
+   "fieldname": "auto_create_collections",
+   "fieldtype": "Check",
+   "label": "Auto-create Missing Collections"
+  },
+  {
    "fieldname": "section_break_filters",
    "fieldtype": "Section Break",
    "label": "Item Eligibility Filters"
@@ -320,7 +328,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-11 14:00:00.000000",
+ "modified": "2025-12-12 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
