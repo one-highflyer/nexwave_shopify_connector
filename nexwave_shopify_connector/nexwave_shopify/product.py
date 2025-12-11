@@ -120,13 +120,48 @@ def sync_item_price_to_shopify(doc, method=None):
 			)
 
 
-def sync_item_to_store(item_code: str, store_name: str):
+@frappe.whitelist()
+def manual_sync_item_to_shopify(item_code: str):
+	"""
+	Manually trigger sync of item to all configured Shopify stores.
+
+	Called from Item form button. Forces sync regardless of change detection.
+
+	Args:
+		item_code: ERPNext Item code
+	"""
+	item = frappe.get_doc("Item", item_code)
+
+	if not item.shopify_stores:
+		frappe.throw(_("No Shopify stores configured for this item"))
+
+	queued_count = 0
+	for store_row in item.shopify_stores:
+		if store_row.enabled:
+			frappe.enqueue(
+				"nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_store",
+				queue="short",
+				timeout=300,
+				item_code=item_code,
+				store_name=store_row.shopify_store,
+				force=True,  # Skip change detection for manual sync
+			)
+			queued_count += 1
+
+	if queued_count == 0:
+		frappe.throw(_("No enabled Shopify stores found for this item"))
+
+	return {"success": True, "queued_count": queued_count}
+
+
+def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 	"""
 	Sync single item to a single Shopify store.
 
 	Args:
 		item_code: ERPNext Item code
 		store_name: Shopify Store name
+		force: If True, skip change detection and force sync
 	"""
 	item = frappe.get_doc("Item", item_code)
 	store = frappe.get_doc("Shopify Store", store_name)
@@ -151,9 +186,9 @@ def sync_item_to_store(item_code: str, store_name: str):
 	# Get or create Item Shopify Store row
 	store_row = get_item_shopify_store_row(item, store)
 
-	# Check for changes using hash
+	# Check for changes using hash (skip if force=True)
 	current_hash = compute_sync_hash(item, store)
-	if store_row and store_row.last_sync_hash == current_hash:
+	if not force and store_row and store_row.last_sync_hash == current_hash:
 		# No changes, skip sync
 		return
 
@@ -178,7 +213,7 @@ def sync_item_to_store(item_code: str, store_name: str):
 			# Sync image if enabled
 			image_hash = None
 			if store.enable_image_sync:
-				image_hash = _sync_item_image_to_shopify(item, store, product.id, store_row)
+				image_hash = _sync_item_image_to_shopify(item, store, product.id, store_row, force)
 
 			# Update Item Shopify Store row
 			_update_item_shopify_store_row(item, store, product, current_hash, image_hash)
@@ -494,6 +529,8 @@ def compute_sync_hash(item, store) -> str:
 	"""
 	Compute hash of item fields for change detection.
 
+	Includes mapped fields and image (if image sync is enabled).
+
 	Args:
 		item: Item document
 		store: Shopify Store document
@@ -508,6 +545,17 @@ def compute_sync_hash(item, store) -> str:
 		field_name = field_map.erpnext_field
 		value = _get_field_value(item, store, field_name, field_map.default_value)
 		hash_data[field_name] = str(value) if value is not None else ""
+
+	# Include image in hash if image sync is enabled
+	if store.enable_image_sync and item.image:
+		file_path = _get_item_image_path(item)
+		if file_path:
+			hash_data["_image_hash"] = _compute_image_hash(file_path)
+		else:
+			hash_data["_image_hash"] = ""
+	elif store.enable_image_sync:
+		# No image set
+		hash_data["_image_hash"] = ""
 
 	# Create deterministic hash
 	hash_str = json.dumps(hash_data, sort_keys=True)
@@ -621,7 +669,9 @@ def _sync_product_image(product_id: str, image_data: str, filename: str) -> bool
 	return True
 
 
-def _sync_item_image_to_shopify(item, store, product_id: str, store_row) -> Optional[str]:
+def _sync_item_image_to_shopify(
+	item, store, product_id: str, store_row, force: bool = False
+) -> Optional[str]:
 	"""
 	Sync item image to Shopify product if image has changed.
 
@@ -630,6 +680,7 @@ def _sync_item_image_to_shopify(item, store, product_id: str, store_row) -> Opti
 		store: Shopify Store document
 		product_id: Shopify product ID
 		store_row: Item Shopify Store row (or None)
+		force: If True, skip change detection and force sync
 
 	Returns:
 		New image hash if synced, None otherwise
@@ -639,9 +690,9 @@ def _sync_item_image_to_shopify(item, store, product_id: str, store_row) -> Opti
 	if not image_data:
 		return None
 
-	# Check if image has changed
+	# Check if image has changed (skip if force=True)
 	last_image_hash = store_row.last_image_hash if store_row else None
-	if last_image_hash == image_hash:
+	if not force and last_image_hash == image_hash:
 		# Image unchanged, return existing hash
 		return image_hash
 
