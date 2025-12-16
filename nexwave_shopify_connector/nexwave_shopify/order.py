@@ -50,6 +50,13 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 	# Create Sales Order
 	so = _create_sales_order(order, store, customer_name, contact_name)
 
+	logger.info(
+		"Sales Order created: %s for Shopify Order ID: %s, financial status: %s",
+		so.name,
+		order.get("id"),
+		order.get("financial_status"),
+	)
+
 	# Handle prepaid orders
 	if order.get("financial_status") == "paid" and store.auto_submit_sales_order:
 		so.submit()
