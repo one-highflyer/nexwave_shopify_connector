@@ -2,22 +2,24 @@
 # For license information, please see license.txt
 
 import json
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
 
+if TYPE_CHECKING:
+	from frappe.model.document import Document
 
 def create_shopify_log(
 	status: str = "Queued",
-	method: Optional[str] = None,
-	shopify_store: Optional[str] = None,
-	request_data: Optional[Dict[str, Any]] = None,
-	response_data: Optional[Dict[str, Any]] = None,
-	exception: Optional[str] = None,
-	message: Optional[str] = None,
-	reference_doctype: Optional[str] = None,
-	reference_name: Optional[str] = None,
+	method: str | None = None,
+	shopify_store: str | None = None,
+	request_data: dict[str, Any] | None = None,
+	response_data: dict[str, Any] | None = None,
+	exception: str | None = None,
+	message: str | None = None,
+	reference_doctype: str | None = None,
+	reference_name: str | None = None,
 ) -> "Document":
 	"""
 	Create a NexWave Shopify Log entry for Shopify operations.
@@ -58,7 +60,7 @@ def create_shopify_log(
 	return log
 
 
-def get_shopify_store_context() -> Optional[str]:
+def get_shopify_store_context() -> str | None:
 	"""
 	Get the current Shopify Store from context.
 
@@ -103,7 +105,7 @@ def is_item_eligible_for_store(item: "Document", store: "Document") -> bool:
 	return True  # All filters passed
 
 
-def get_item_shopify_store_row(item: "Document", store: "Document") -> Optional["Document"]:
+def get_item_shopify_store_row(item: "Document", store: "Document") -> "Document | None":
 	"""
 	Get the Item Shopify Store child row for a specific store.
 

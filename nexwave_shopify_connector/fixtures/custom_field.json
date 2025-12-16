@@ -156,5 +156,47 @@
 		"insert_after": "shopify_order_id",
 		"label": "Shopify Order Number",
 		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_financial_status",
+		"dt": "Sales Order",
+		"fieldname": "shopify_financial_status",
+		"fieldtype": "Select",
+		"insert_after": "shopify_order_number",
+		"label": "Shopify Financial Status",
+		"options": "\npaid\npending\npartially_paid\nrefunded\nvoided",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_fulfillment_status",
+		"dt": "Sales Order",
+		"fieldname": "shopify_fulfillment_status",
+		"fieldtype": "Select",
+		"insert_after": "shopify_financial_status",
+		"label": "Shopify Fulfillment Status",
+		"options": "\nfulfilled\nunfulfilled\npartial",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order Item-shopify_item_discount",
+		"dt": "Sales Order Item",
+		"fieldname": "shopify_item_discount",
+		"fieldtype": "Currency",
+		"insert_after": "discount_amount",
+		"label": "Shopify Item Discount",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Address-shopify_address_id",
+		"dt": "Address",
+		"fieldname": "shopify_address_id",
+		"fieldtype": "Data",
+		"insert_after": "address_type",
+		"label": "Shopify Address ID",
+		"read_only": 1
 	}
 ]

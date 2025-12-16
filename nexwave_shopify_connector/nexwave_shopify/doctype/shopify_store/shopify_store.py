@@ -288,3 +288,32 @@ class ShopifyStore(Document):
 			)
 			frappe.db.commit()
 			frappe.throw(_("Failed to fetch collections: {0}").format(str(e)), title=_("Shopify Error"))
+
+	@frappe.whitelist()
+	def fetch_and_sync_orders(self):
+		"""
+		Manual trigger to sync new orders from Shopify.
+
+		Fetches orders created since the last sync (or last 30 days if first sync)
+		and creates Sales Orders in NexWave.
+		"""
+		if not self.enabled:
+			frappe.throw(_("Store is not enabled"))
+
+		from nexwave_shopify_connector.nexwave_shopify.order import sync_new_orders
+
+		result = sync_new_orders(self.name)
+
+		message = _("Order sync completed.") + "<br><br>"
+		message += _("<b>Synced:</b> {0} orders").format(result["synced"]) + "<br>"
+		message += _("<b>Skipped:</b> {0} (already exist)").format(result["skipped"]) + "<br>"
+		message += _("<b>Errors:</b> {0}").format(result["errors"])
+
+		if result["errors"] > 0:
+			message += "<br><br>" + _("Check Error Log for details on failed orders.")
+
+		frappe.msgprint(
+			message,
+			title=_("Shopify Order Sync"),
+			indicator="green" if result["errors"] == 0 else "orange",
+		)

@@ -112,6 +112,25 @@ frappe.ui.form.on("Shopify Store", {
 					);
 				}, __("Sync"));
 			}
+
+			if (frm.doc.enabled && frm.doc.sync_orders) {
+				frm.add_custom_button(__("Sync Orders"), function() {
+					frappe.confirm(
+						__("This will fetch new orders from Shopify and create Sales Orders. Continue?"),
+						function() {
+							frm.call({
+								method: "fetch_and_sync_orders",
+								doc: frm.doc,
+								freeze: true,
+								freeze_message: __("Syncing orders from Shopify..."),
+								callback: function(r) {
+									frm.reload_doc();
+								}
+							});
+						}
+					);
+				}, __("Sync"));
+			}
 		}
 
 		// Populate series options
@@ -186,6 +205,15 @@ frappe.ui.form.on("Shopify Store", {
 				}
 			};
 		});
+
+		frm.set_query("cash_bank_account", function() {
+			return {
+				filters: {
+					company: frm.doc.company,
+					account_type: ["in", ["Bank", "Cash"]]
+				}
+			};
+		});
 	},
 
 	company(frm) {
@@ -194,5 +222,6 @@ frappe.ui.form.on("Shopify Store", {
 		frm.set_value("cost_center", "");
 		frm.set_value("default_sales_tax_account", "");
 		frm.set_value("default_shipping_charges_account", "");
+		frm.set_value("cash_bank_account", "");
 	}
 });

@@ -30,6 +30,15 @@
   "column_break_orders",
   "sync_delivery_note",
   "sync_sales_invoice",
+  "last_order_sync",
+  "section_break_order_automation",
+  "auto_submit_sales_order",
+  "auto_create_invoice",
+  "auto_create_payment_entry",
+  "column_break_order_automation",
+  "cash_bank_account",
+  "add_shipping_as_item",
+  "shipping_item",
   "section_break_inventory",
   "enable_inventory_sync",
   "warehouse",
@@ -189,6 +198,70 @@
    "label": "Sync Sales Invoice"
   },
   {
+   "fieldname": "last_order_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Order Sync"
+  },
+  {
+   "fieldname": "section_break_order_automation",
+   "fieldtype": "Section Break",
+   "label": "Order Automation"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.sync_orders",
+   "description": "Automatically submit Sales Order for paid orders",
+   "fieldname": "auto_submit_sales_order",
+   "fieldtype": "Check",
+   "label": "Auto-submit Sales Order"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.sync_orders && doc.auto_submit_sales_order",
+   "description": "Automatically create Sales Invoice for paid orders",
+   "fieldname": "auto_create_invoice",
+   "fieldtype": "Check",
+   "label": "Auto-create Invoice"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.sync_orders && doc.auto_create_invoice",
+   "description": "Automatically create Payment Entry for paid orders",
+   "fieldname": "auto_create_payment_entry",
+   "fieldtype": "Check",
+   "label": "Auto-create Payment Entry"
+  },
+  {
+   "fieldname": "column_break_order_automation",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.auto_create_payment_entry",
+   "description": "Bank/Cash account for Payment Entries",
+   "fieldname": "cash_bank_account",
+   "fieldtype": "Link",
+   "label": "Cash/Bank Account",
+   "mandatory_depends_on": "eval:doc.auto_create_payment_entry",
+   "options": "Account"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.sync_orders",
+   "description": "Add shipping charges as a line item instead of as tax",
+   "fieldname": "add_shipping_as_item",
+   "fieldtype": "Check",
+   "label": "Add Shipping as Item"
+  },
+  {
+   "depends_on": "eval:doc.add_shipping_as_item",
+   "description": "Item to use for shipping charges",
+   "fieldname": "shipping_item",
+   "fieldtype": "Link",
+   "label": "Shipping Item",
+   "mandatory_depends_on": "eval:doc.add_shipping_as_item",
+   "options": "Item"
+  },
+  {
    "fieldname": "section_break_inventory",
    "fieldtype": "Section Break",
    "label": "Inventory Settings"
@@ -328,7 +401,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-12 10:00:00.000000",
+ "modified": "2025-12-16 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

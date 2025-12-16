@@ -22,15 +22,13 @@ DEFAULT_API_VERSION = "2024-10"
 WEBHOOK_EVENTS = [
 	"orders/create",
 	"orders/paid",
-	"orders/fulfilled",
 	"orders/cancelled",
 ]
 
 # Event to handler mapping
 EVENT_MAPPER = {
 	"orders/create": "nexwave_shopify_connector.nexwave_shopify.order.sync_sales_order",
-	"orders/paid": "nexwave_shopify_connector.nexwave_shopify.invoice.prepare_sales_invoice",
-	"orders/fulfilled": "nexwave_shopify_connector.nexwave_shopify.fulfillment.prepare_delivery_note",
+	"orders/paid": "nexwave_shopify_connector.nexwave_shopify.order.process_paid_order",
 	"orders/cancelled": "nexwave_shopify_connector.nexwave_shopify.order.cancel_order",
 }
 
@@ -55,6 +53,7 @@ def shopify_session(shopify_store: Optional[Union[str, "Document"]] = None, allo
 		def sync_products():
 			pass
 	"""
+
 	def decorator(func):
 		@functools.wraps(func)
 		def wrapper(*args, **kwargs):
@@ -82,13 +81,12 @@ def shopify_session(shopify_store: Optional[Union[str, "Document"]] = None, allo
 				frappe.flags.shopify_store = None
 
 		return wrapper
+
 	return decorator
 
 
 def _resolve_shopify_store(
-	shopify_store: Optional[Union[str, "Document"]],
-	allow_implicit: bool,
-	kwargs: dict
+	shopify_store: Optional[Union[str, "Document"]], allow_implicit: bool, kwargs: dict
 ) -> Optional["Document"]:
 	"""Resolve Shopify Store document from various inputs."""
 
@@ -106,11 +104,7 @@ def _resolve_shopify_store(
 
 	# Try implicit resolution
 	if allow_implicit:
-		enabled_stores = frappe.get_all(
-			"Shopify Store",
-			filters={"enabled": 1},
-			limit=2
-		)
+		enabled_stores = frappe.get_all("Shopify Store", filters={"enabled": 1}, limit=2)
 		if len(enabled_stores) == 1:
 			return frappe.get_doc("Shopify Store", enabled_stores[0].name)
 		elif len(enabled_stores) > 1:
@@ -181,7 +175,7 @@ def normalize_shop_domain(domain: str) -> str:
 	# Remove protocol
 	for prefix in ["https://", "http://"]:
 		if domain.startswith(prefix):
-			domain = domain[len(prefix):]
+			domain = domain[len(prefix) :]
 
 	# Remove trailing slash
 	domain = domain.rstrip("/")
@@ -250,11 +244,7 @@ def register_webhooks(store: "Document") -> List[Webhook]:
 
 	with Session.temp(*auth_details):
 		for topic in WEBHOOK_EVENTS:
-			webhook = Webhook.create({
-				"topic": topic,
-				"address": get_callback_url(store),
-				"format": "json"
-			})
+			webhook = Webhook.create({"topic": topic, "address": get_callback_url(store), "format": "json"})
 
 			if webhook.is_valid():
 				new_webhooks.append(webhook)
@@ -321,19 +311,12 @@ def store_request_data() -> None:
 
 	if event not in EVENT_MAPPER:
 		create_shopify_log(
-			status="Error",
-			shopify_store=store.name,
-			request_data=data,
-			exception=f"Unknown event: {event}"
+			status="Error", shopify_store=store.name, request_data=data, exception=f"Unknown event: {event}"
 		)
 		return
 
 	# Create log
-	log = create_shopify_log(
-		method=EVENT_MAPPER[event],
-		shopify_store=store.name,
-		request_data=data
-	)
+	log = create_shopify_log(method=EVENT_MAPPER[event], shopify_store=store.name, request_data=data)
 
 	# Enqueue background job with store context
 	frappe.enqueue(
@@ -359,16 +342,10 @@ def _validate_request(req, hmac_header: str, secret_key: str) -> None:
 	if not secret_key:
 		frappe.throw(_("Shared secret not configured for this store"))
 
-	sig = base64.b64encode(
-		hmac.new(secret_key.encode("utf8"), req.data, hashlib.sha256).digest()
-	)
+	sig = base64.b64encode(hmac.new(secret_key.encode("utf8"), req.data, hashlib.sha256).digest())
 
 	if sig != bytes(hmac_header.encode()):
 		shop_domain = frappe.get_request_header("X-Shopify-Shop-Domain")
 		store_name = get_shopify_store_by_domain(shop_domain)
-		create_shopify_log(
-			status="Error",
-			shopify_store=store_name,
-			request_data=req.data
-		)
+		create_shopify_log(status="Error", shopify_store=store_name, request_data=req.data)
 		frappe.throw(_("Unverified Webhook Data"))
