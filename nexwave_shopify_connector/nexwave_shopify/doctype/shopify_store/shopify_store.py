@@ -40,7 +40,13 @@ class ShopifyStore(Document):
 		)
 
 		access_token: DF.Password | None
+		add_shipping_as_item: DF.Check
 		api_version: DF.Data | None
+		auto_create_collections: DF.Check
+		auto_create_invoice: DF.Check
+		auto_create_payment_entry: DF.Check
+		auto_submit_sales_order: DF.Check
+		cash_bank_account: DF.Link | None
 		collection_mapping: DF.Table[ShopifyStoreCollectionMapping]
 		company: DF.Link
 		cost_center: DF.Link | None
@@ -49,6 +55,7 @@ class ShopifyStore(Document):
 		default_sales_tax_account: DF.Link | None
 		default_shipping_charges_account: DF.Link | None
 		delivery_note_series: DF.Literal[None]
+		enable_image_sync: DF.Check
 		enable_inventory_sync: DF.Check
 		enable_item_sync: DF.Check
 		enabled: DF.Check
@@ -57,10 +64,12 @@ class ShopifyStore(Document):
 		item_filters: DF.Table[ShopifyStoreItemFilter]
 		item_group: DF.Link | None
 		last_inventory_sync: DF.Datetime | None
+		last_order_sync: DF.Datetime | None
 		price_list: DF.Link | None
 		sales_invoice_series: DF.Literal[None]
 		sales_order_series: DF.Literal[None]
 		shared_secret: DF.Data | None
+		shipping_item: DF.Link | None
 		shop_domain: DF.Data
 		sync_delivery_note: DF.Check
 		sync_orders: DF.Check
@@ -70,7 +79,6 @@ class ShopifyStore(Document):
 		warehouse: DF.Link | None
 		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
 		webhooks: DF.Table[ShopifyStoreWebhook]
-
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()

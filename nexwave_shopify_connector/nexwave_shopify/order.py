@@ -9,7 +9,6 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_days, cint, cstr, flt, get_datetime, get_system_timezone, getdate, now, nowdate
 from shopify.collection import PaginatedIterator
-from shopify.resources import Customer as ShopifyCustomer
 from shopify.resources import Order
 from shopify.session import Session
 
@@ -93,7 +92,7 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 	# Check for duplicate first
 	if frappe.db.get_value("Sales Order", filters={"shopify_order_id": cstr(payload["id"])}):
 		create_shopify_log(
-			status="Invalid",
+			status="Warning",
 			message="Sales order already exists, not synced",
 			shopify_store=shopify_store,
 		)
@@ -112,7 +111,7 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 			)
 		else:
 			create_shopify_log(
-				status="Invalid",
+				status="Warning",
 				message="Sales order already exists, not synced",
 				shopify_store=shopify_store,
 			)
@@ -151,7 +150,7 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 		if not so_name:
 			create_shopify_log(
-				status="Invalid",
+				status="Warning",
 				message="Sales Order not found for paid order",
 				shopify_store=shopify_store,
 			)
@@ -216,7 +215,7 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 
 		if not so_name:
 			create_shopify_log(
-				status="Invalid",
+				status="Warning",
 				message="Sales Order does not exist for cancellation",
 				shopify_store=shopify_store,
 			)
@@ -330,7 +329,7 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 					else:
 						skipped += 1
 						create_shopify_log(
-							status="Invalid",
+							status="Warning",
 							message=f"Order {order.name} already exists, skipped",
 							shopify_store=shopify_store,
 							request_data=order_data,
@@ -389,8 +388,32 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 	"""
 	logger = get_logger()
 	logger.info("Syncing customer for order: %s", order.get("id"))
+
+	# Log incoming order data for debugging
+	logger.info(
+		"Order data - email: %s, customer_id: %s",
+		order.get("email"),
+		order.get("customer", {}).get("id") if order.get("customer") else None,
+	)
+	logger.info("Order billing_address: %s", order.get("billing_address"))
+	logger.info("Order shipping_address: %s", order.get("shipping_address"))
+
 	shopify_customer = order.get("customer") or {}
 	customer_id = shopify_customer.get("id")
+
+	# Enrich customer with order-level data (addresses and email)
+	# This is critical because the order.customer object often has incomplete data
+	if not shopify_customer.get("email") and order.get("email"):
+		shopify_customer["email"] = order.get("email")
+	shopify_customer["billing_address"] = order.get("billing_address") or {}
+	shopify_customer["shipping_address"] = order.get("shipping_address") or {}
+
+	logger.info(
+		"Customer data after enrichment - first: %s, last: %s, email: %s",
+		shopify_customer.get("first_name"),
+		shopify_customer.get("last_name"),
+		shopify_customer.get("email"),
+	)
 
 	if not customer_id:
 		# No customer in order - use default customer
@@ -411,7 +434,9 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 	existing_customer = frappe.db.get_value("Customer", {"shopify_customer_id": cstr(customer_id)})
 
 	if existing_customer:
-		logger.info("Customer already exists (by shopify_customer_id), updating addresses: %s", existing_customer)
+		logger.info(
+			"Customer already exists (by shopify_customer_id), updating addresses: %s", existing_customer
+		)
 		customer_name = existing_customer
 		# Update addresses if provided
 		_sync_addresses(order, customer_name)
@@ -463,19 +488,18 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 				contact_name = _create_contact(shopify_customer, customer_name)
 				return customer_name, contact_name
 
-	# Fetch full customer data from Shopify API (order data may be incomplete)
-	try:
-		full_customer = ShopifyCustomer.find(customer_id)
-		shopify_customer = full_customer.to_dict() if full_customer else shopify_customer
-		logger.info("Full customer data fetched from Shopify API: %s", shopify_customer.get("id"))
-	except Exception as e:
-		# If API call fails, fall back to order data
-		logger.warning(
-			"Error fetching full customer data from Shopify API. Order ID: %s, Error: %s",
-			order.get("id"),
-			str(e),
-		)
-		pass
+	# Note: We intentionally do NOT fetch from Customer API here.
+	# The order payload contains all necessary customer data in billing/shipping addresses.
+	# API fetch would only return default_address, which is less useful than order addresses.
+	# (ecommerce_integrations also uses this approach)
+	logger.info(
+		"Using enriched order data for customer creation. first=%s, last=%s, email=%s, has_billing=%s, has_shipping=%s",
+		shopify_customer.get("first_name"),
+		shopify_customer.get("last_name"),
+		shopify_customer.get("email"),
+		bool(shopify_customer.get("billing_address")),
+		bool(shopify_customer.get("shipping_address")),
+	)
 
 	# Create new customer
 	customer_name = _create_customer(shopify_customer, store)
@@ -486,18 +510,82 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 
 
 def _create_customer(shopify_customer: dict, store) -> str:
-	"""Create a new Customer from Shopify data."""
+	"""Create a new Customer from Shopify data.
+
+	Extracts customer name from multiple sources in order:
+	1. Customer object (first_name, last_name)
+	2. Billing address (first_name, last_name, name)
+	3. Shipping address (first_name, last_name, name)
+	4. Default address (first_name, last_name, name)
+	5. Email
+	6. Shopify Customer ID (final fallback)
+	"""
 	logger = get_logger()
-	logger.info("Creating new customer: %s, payload: %s", shopify_customer.get("id"), shopify_customer)
+	logger.info("Creating new customer from Shopify ID: %s", shopify_customer.get("id"))
+
+	# Try customer-level first
 	first_name = shopify_customer.get("first_name") or ""
 	last_name = shopify_customer.get("last_name") or ""
-	email = shopify_customer.get("email") or ""
 
-	# Determine customer name
+	# Fallback 1: billing address
+	billing = shopify_customer.get("billing_address") or {}
+	if not first_name:
+		first_name = billing.get("first_name") or ""
+	if not last_name:
+		last_name = billing.get("last_name") or ""
+	# Try billing.name (full name field)
+	if not first_name and billing.get("name"):
+		parts = billing.get("name", "").split()
+		first_name = parts[0] if parts else ""
+		if not last_name and len(parts) > 1:
+			last_name = " ".join(parts[1:])
+
+	# Fallback 2: shipping address
+	shipping = shopify_customer.get("shipping_address") or {}
+	if not first_name:
+		first_name = shipping.get("first_name") or ""
+	if not last_name:
+		last_name = shipping.get("last_name") or ""
+	if not first_name and shipping.get("name"):
+		parts = shipping.get("name", "").split()
+		first_name = parts[0] if parts else ""
+		if not last_name and len(parts) > 1:
+			last_name = " ".join(parts[1:])
+
+	# Fallback 3: default_address
+	default_addr = shopify_customer.get("default_address") or {}
+	if not first_name:
+		first_name = default_addr.get("first_name") or ""
+	if not last_name:
+		last_name = default_addr.get("last_name") or ""
+	if not first_name and default_addr.get("name"):
+		parts = default_addr.get("name", "").split()
+		first_name = parts[0] if parts else ""
+		if not last_name and len(parts) > 1:
+			last_name = " ".join(parts[1:])
+
 	customer_name = f"{first_name} {last_name}".strip()
+
+	# Fallback 4: email
+	email = shopify_customer.get("email") or ""
 	if not customer_name:
-		customer_name = email or f"Shopify Customer {shopify_customer.get('id')}"
-		logger.warning("No customer name found, using email: %s, customer name: %s", email, customer_name)
+		customer_name = email
+
+	# Final fallback: Shopify ID
+	if not customer_name:
+		customer_name = f"Shopify Customer {shopify_customer.get('id')}"
+		logger.warning("No customer name found from any source, using ID fallback: %s", customer_name)
+
+	logger.info(
+		"Customer name resolved: %s (from sources: customer=%s/%s, billing=%s, shipping=%s, default=%s, email=%s)",
+		customer_name,
+		shopify_customer.get("first_name"),
+		shopify_customer.get("last_name"),
+		billing.get("name"),
+		shipping.get("name"),
+		default_addr.get("name"),
+		email,
+	)
 
 	customer = frappe.get_doc(
 		{
@@ -535,8 +623,11 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 	"""Create or update an address for a customer."""
 	logger = get_logger()
 	if not address_data:
-		logger.warning("No address data provided")
+		logger.warning("No %s address data provided", address_type)
 		return None
+
+	# Log the raw address data for debugging
+	logger.info("%s address data received: %s", address_type, address_data)
 
 	shopify_address_id = cstr(address_data.get("id", ""))
 
@@ -545,8 +636,11 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 	if shopify_address_id:
 		existing_address = frappe.db.get_value("Address", {"shopify_address_id": shopify_address_id})
 
+	# Get address title from address name or customer name
+	address_title = address_data.get("name") or customer_name
+
 	address_dict = {
-		"address_title": address_data.get("name") or customer_name,
+		"address_title": address_title,
 		"address_type": address_type,
 		"address_line1": address_data.get("address1") or "",
 		"address_line2": address_data.get("address2") or "",
@@ -557,6 +651,14 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		"phone": address_data.get("phone") or "",
 		"shopify_address_id": shopify_address_id,
 	}
+
+	logger.info(
+		"Address dict built: title=%s, line1=%s, city=%s, country=%s",
+		address_title,
+		address_dict["address_line1"],
+		address_dict["city"],
+		address_dict["country"],
+	)
 
 	if existing_address:
 		address = frappe.get_doc("Address", existing_address)
@@ -580,14 +682,50 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 	"""Create a contact for the customer if one doesn't already exist.
 
+	Searches multiple sources for email, phone, and name:
+	1. Customer object directly
+	2. Billing address
+	3. Shipping address
+	4. Default address
+	5. Customer name as fallback for first_name
+
 	Returns:
 		Contact name if created or found, None if no email/phone provided
 	"""
 	logger = get_logger()
-	email = shopify_customer.get("email")
-	phone = shopify_customer.get("phone") or shopify_customer.get("default_address", {}).get("phone")
+
+	# Extract addresses for fallback lookups
+	billing = shopify_customer.get("billing_address") or {}
+	shipping = shopify_customer.get("shipping_address") or {}
+	default_addr = shopify_customer.get("default_address") or {}
+
+	# Try multiple sources for email
+	email = (
+		shopify_customer.get("email")
+		or billing.get("email")
+		or shipping.get("email")
+		or default_addr.get("email")
+	)
+
+	# Try multiple sources for phone
+	phone = (
+		shopify_customer.get("phone")
+		or billing.get("phone")
+		or shipping.get("phone")
+		or default_addr.get("phone")
+	)
+
+	logger.info(
+		"Contact data sources - customer_email: %s, billing_phone: %s, shipping_phone: %s, default_phone: %s",
+		shopify_customer.get("email"),
+		billing.get("phone"),
+		shipping.get("phone"),
+		default_addr.get("phone"),
+	)
+	logger.info("Contact resolved - email: %s, phone: %s", email, phone)
 
 	if not email and not phone:
+		logger.warning("No email or phone found for contact creation, customer: %s", customer_name)
 		return None
 
 	# Check if contact with this email already exists for this customer
@@ -602,17 +740,52 @@ def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 			limit=1,
 		)
 		if existing_contacts:
-			logger.info(
-				"Contact already exists for customer: %s, email: %s", customer_name, email
-			)
+			logger.info("Contact already exists for customer: %s, email: %s", customer_name, email)
 			return existing_contacts[0].name
+
+	# Get name from multiple sources for contact
+	first_name = (
+		shopify_customer.get("first_name")
+		or billing.get("first_name")
+		or shipping.get("first_name")
+		or default_addr.get("first_name")
+	)
+	last_name = (
+		shopify_customer.get("last_name")
+		or billing.get("last_name")
+		or shipping.get("last_name")
+		or default_addr.get("last_name")
+	)
+
+	# Try name field from addresses if first_name still empty
+	if not first_name:
+		name_field = billing.get("name") or shipping.get("name") or default_addr.get("name")
+		if name_field:
+			parts = name_field.split()
+			first_name = parts[0] if parts else ""
+			if not last_name and len(parts) > 1:
+				last_name = " ".join(parts[1:])
+
+	# Final fallback to customer name
+	if not first_name:
+		first_name = customer_name.split()[0] if customer_name else "Customer"
+
+	logger.info(
+		"Contact name resolved - first: %s, last: %s (from customer: %s/%s, billing: %s, shipping: %s)",
+		first_name,
+		last_name,
+		shopify_customer.get("first_name"),
+		shopify_customer.get("last_name"),
+		billing.get("name"),
+		shipping.get("name"),
+	)
 
 	# Create new contact
 	contact = frappe.get_doc(
 		{
 			"doctype": "Contact",
-			"first_name": shopify_customer.get("first_name") or customer_name,
-			"last_name": shopify_customer.get("last_name") or "",
+			"first_name": first_name,
+			"last_name": last_name or "",
 			"links": [{"link_doctype": "Customer", "link_name": customer_name}],
 		}
 	)

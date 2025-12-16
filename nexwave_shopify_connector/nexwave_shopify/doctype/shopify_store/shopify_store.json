@@ -327,6 +327,7 @@
    "label": "Enable Image Sync"
   },
   {
+   "allow_bulk_edit": 1,
    "fieldname": "item_field_map",
    "fieldtype": "Table",
    "label": "Item Field Mapping",
@@ -338,6 +339,7 @@
    "label": "Collection Mapping"
   },
   {
+   "allow_bulk_edit": 1,
    "description": "Map NexWave field values to Shopify Collections",
    "fieldname": "collection_mapping",
    "fieldtype": "Table",
@@ -401,7 +403,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-16 18:00:00.000000",
+ "modified": "2025-12-17 03:18:40.507653",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
