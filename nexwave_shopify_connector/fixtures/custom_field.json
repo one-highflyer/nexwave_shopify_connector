@@ -20,22 +20,14 @@
 	},
 	{
 		"doctype": "Custom Field",
-		"name": "Customer-shopify_customer_section",
-		"dt": "Customer",
-		"fieldname": "shopify_customer_section",
-		"fieldtype": "Section Break",
-		"insert_after": "customer_type",
-		"label": "Shopify"
-	},
-	{
-		"doctype": "Custom Field",
 		"name": "Customer-shopify_customer_id",
 		"dt": "Customer",
 		"fieldname": "shopify_customer_id",
 		"fieldtype": "Data",
-		"insert_after": "shopify_customer_section",
+		"insert_after": "customer_name",
 		"label": "Shopify Customer ID",
-		"read_only": 1
+		"read_only": 1,
+		"depends_on": "eval:doc.shopify_customer_id"
 	},
 	{
 		"doctype": "Custom Field",
@@ -43,8 +35,10 @@
 		"dt": "Sales Order",
 		"fieldname": "shopify_section",
 		"fieldtype": "Section Break",
-		"insert_after": "customer_name",
-		"label": "Shopify"
+		"insert_after": "amended_from",
+		"label": "Shopify",
+		"depends_on": "eval:doc.shopify_order_id",
+		"collapsible": 1
 	},
 	{
 		"doctype": "Custom Field",
@@ -83,8 +77,10 @@
 		"dt": "Delivery Note",
 		"fieldname": "shopify_section",
 		"fieldtype": "Section Break",
-		"insert_after": "customer_name",
-		"label": "Shopify"
+		"insert_after": "return_against",
+		"label": "Shopify",
+		"depends_on": "eval:doc.shopify_order_id",
+		"collapsible": 1
 	},
 	{
 		"doctype": "Custom Field",
@@ -123,8 +119,10 @@
 		"dt": "Sales Invoice",
 		"fieldname": "shopify_section",
 		"fieldtype": "Section Break",
-		"insert_after": "customer_name",
-		"label": "Shopify"
+		"insert_after": "amended_from",
+		"label": "Shopify",
+		"depends_on": "eval:doc.shopify_order_id",
+		"collapsible": 1
 	},
 	{
 		"doctype": "Custom Field",
