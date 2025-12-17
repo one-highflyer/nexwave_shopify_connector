@@ -9,7 +9,7 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
-    "ShopifyAPI==12.4.0"  # update after resolving pyjwt conflict in frappe
+    "ShopifyAPI>=12.4.0,<13.0.0"
 ]
 
 [build-system]
