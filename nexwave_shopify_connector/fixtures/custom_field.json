@@ -186,15 +186,5 @@
 		"insert_after": "discount_amount",
 		"label": "Shopify Item Discount",
 		"read_only": 1
-	},
-	{
-		"doctype": "Custom Field",
-		"name": "Address-shopify_address_id",
-		"dt": "Address",
-		"fieldname": "shopify_address_id",
-		"fieldtype": "Data",
-		"insert_after": "address_type",
-		"label": "Shopify Address ID",
-		"read_only": 1
 	}
 ]

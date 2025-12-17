@@ -45,10 +45,10 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 		return None
 
 	# Sync customer and addresses
-	customer_name, contact_name = _sync_customer(order, store)
+	customer_name, contact_name, billing_addr, shipping_addr = _sync_customer(order, store)
 
 	# Create Sales Order
-	so = _create_sales_order(order, store, customer_name, contact_name)
+	so = _create_sales_order(order, store, customer_name, contact_name, billing_addr, shipping_addr)
 
 	logger.info(
 		"Sales Order created: %s for Shopify Order ID: %s, financial status: %s",
@@ -382,7 +382,7 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 # =============================================================================
 
 
-def _sync_customer(order: dict, store) -> tuple[str, str | None]:
+def _sync_customer(order: dict, store) -> tuple[str, str | None, str | None, str | None]:
 	"""
 	Sync customer and addresses from Shopify order.
 
@@ -391,7 +391,7 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 		store: Shopify Store document
 
 	Returns:
-		Tuple of (customer_name, contact_name) to use for Sales Order
+		Tuple of (customer_name, contact_name, billing_address_name, shipping_address_name)
 	"""
 	logger = get_logger()
 	logger.info("Syncing customer for order: %s", order.get("id"))
@@ -435,7 +435,8 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 			"last_name": billing_address.get("last_name"),
 		}
 		contact_name = _create_contact(contact_data, customer_name)
-		return customer_name, contact_name
+		billing_addr, shipping_addr = _sync_addresses(order, customer_name)
+		return customer_name, contact_name, billing_addr, shipping_addr
 
 	# Check if customer already exists by shopify_customer_id
 	existing_customer = frappe.db.get_value("Customer", {"shopify_customer_id": cstr(customer_id)})
@@ -445,11 +446,11 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 			"Customer already exists (by shopify_customer_id), updating addresses: %s", existing_customer
 		)
 		customer_name = existing_customer
-		# Update addresses if provided
-		_sync_addresses(order, customer_name)
+		# Sync addresses
+		billing_addr, shipping_addr = _sync_addresses(order, customer_name)
 		# Get or create contact for existing customer
 		contact_name = _create_contact(shopify_customer, customer_name)
-		return customer_name, contact_name
+		return customer_name, contact_name, billing_addr, shipping_addr
 
 	# Try to find existing customer by email via Contact
 	email = shopify_customer.get("email")
@@ -481,9 +482,9 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 				logger.info(
 					"Customer found by email (exact match), set shopify_customer_id: %s", customer_name
 				)
-				_sync_addresses(order, customer_name)
+				billing_addr, shipping_addr = _sync_addresses(order, customer_name)
 				contact_name = _create_contact(shopify_customer, customer_name)
-				return customer_name, contact_name
+				return customer_name, contact_name, billing_addr, shipping_addr
 			elif len(linked_customers) > 1:
 				# Multiple matches - use first, don't set shopify_customer_id
 				customer_name = linked_customers[0].link_name
@@ -491,9 +492,9 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 					"Multiple customers found by email, using first match (not setting shopify_customer_id): %s",
 					customer_name,
 				)
-				_sync_addresses(order, customer_name)
+				billing_addr, shipping_addr = _sync_addresses(order, customer_name)
 				contact_name = _create_contact(shopify_customer, customer_name)
-				return customer_name, contact_name
+				return customer_name, contact_name, billing_addr, shipping_addr
 
 	# Note: We intentionally do NOT fetch from Customer API here.
 	# The order payload contains all necessary customer data in billing/shipping addresses.
@@ -510,10 +511,10 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None]:
 
 	# Create new customer
 	customer_name = _create_customer(shopify_customer, store)
-	_sync_addresses(order, customer_name)
+	billing_addr, shipping_addr = _sync_addresses(order, customer_name)
 	contact_name = _create_contact(shopify_customer, customer_name)
 
-	return customer_name, contact_name
+	return customer_name, contact_name, billing_addr, shipping_addr
 
 
 def _create_customer(shopify_customer: dict, store) -> str:
@@ -612,77 +613,94 @@ def _create_customer(shopify_customer: dict, store) -> str:
 	return customer.name
 
 
-def _sync_addresses(order: dict, customer_name: str):
-	"""Sync billing and shipping addresses from order."""
+def _sync_addresses(order: dict, customer_name: str) -> tuple[str | None, str | None]:
+	"""Sync billing and shipping addresses from order.
+
+	Returns:
+		Tuple of (billing_address_name, shipping_address_name)
+	"""
 	logger = get_logger()
 	logger.info("Syncing addresses for order: %s", order.get("id"))
 	billing_address = order.get("billing_address")
 	shipping_address = order.get("shipping_address")
 
+	billing_address_name = None
+	shipping_address_name = None
+
 	if billing_address:
-		_create_or_update_address(billing_address, customer_name, "Billing")
+		billing_address_name = _create_or_update_address(billing_address, customer_name, "Billing")
 
 	if shipping_address:
-		_create_or_update_address(shipping_address, customer_name, "Shipping")
+		shipping_address_name = _create_or_update_address(shipping_address, customer_name, "Shipping")
+
+	return billing_address_name, shipping_address_name
+
+
+def _find_existing_address(
+	customer_name: str, address_title: str, address_type: str, address_line1: str, city: str, country: str
+) -> str | None:
+	"""Find existing address by content match."""
+	addresses = frappe.get_all(
+		"Address",
+		filters=[
+			["Dynamic Link", "link_doctype", "=", "Customer"],
+			["Dynamic Link", "link_name", "=", customer_name],
+			["address_title", "=", address_title],
+			["address_type", "=", address_type],
+			["address_line1", "=", address_line1],
+			["city", "=", city],
+			["country", "=", country],
+		],
+		pluck="name",
+	)
+	return addresses[0] if addresses else None
 
 
 def _create_or_update_address(address_data: dict, customer_name: str, address_type: str) -> str | None:
-	"""Create or update an address for a customer."""
+	"""Create an address for a customer if it doesn't already exist."""
 	logger = get_logger()
 	if not address_data:
 		logger.warning("No %s address data provided", address_type)
 		return None
 
-	# Log the raw address data for debugging
-	logger.info("%s address data received: %s", address_type, address_data)
+	# Validate required field
+	if not address_data.get("address1"):
+		logger.warning("No address1 in %s address data", address_type)
+		return None
 
-	shopify_address_id = cstr(address_data.get("id", ""))
+	# Build address fields
+	address_title = cstr(address_data.get("name") or customer_name).strip()
+	address_line1 = cstr(address_data.get("address1", "")).strip() or "-"
+	city = cstr(address_data.get("city", "")).strip() or "-"
+	country = cstr(address_data.get("country", "")).strip()
 
-	# Check if address exists
-	existing_address = None
-	if shopify_address_id:
-		existing_address = frappe.db.get_value("Address", {"shopify_address_id": shopify_address_id})
-
-	# Get address title from address name or customer name
-	address_title = address_data.get("name") or customer_name
-
-	address_dict = {
-		"address_title": address_title,
-		"address_type": address_type,
-		"address_line1": address_data.get("address1") or "",
-		"address_line2": address_data.get("address2") or "",
-		"city": address_data.get("city") or "",
-		"state": address_data.get("province") or "",
-		"pincode": address_data.get("zip") or "",
-		"country": address_data.get("country") or "",
-		"phone": address_data.get("phone") or "",
-		"shopify_address_id": shopify_address_id,
-	}
-
-	logger.info(
-		"Address dict built: title=%s, line1=%s, city=%s, country=%s",
-		address_title,
-		address_dict["address_line1"],
-		address_dict["city"],
-		address_dict["country"],
+	# Check if address already exists
+	existing = _find_existing_address(
+		customer_name, address_title, address_type, address_line1, city, country
 	)
+	if existing:
+		logger.info("Address already exists: %s", existing)
+		return existing
 
-	if existing_address:
-		address = frappe.get_doc("Address", existing_address)
-		address.update(address_dict)
-		address.save(ignore_permissions=True)
-		logger.info("Address updated: %s for Shopify Address ID: %s", address.name, shopify_address_id)
-	else:
-		address = frappe.get_doc(
-			{
-				"doctype": "Address",
-				**address_dict,
-				"links": [{"link_doctype": "Customer", "link_name": customer_name}],
-			}
-		)
-		address.flags.ignore_mandatory = True
-		address.insert(ignore_permissions=True)
-		logger.info("Address created: %s for Shopify Address ID: %s", address.name, shopify_address_id)
+	# Create new address
+	address = frappe.get_doc(
+		{
+			"doctype": "Address",
+			"address_title": address_title,
+			"address_type": address_type,
+			"address_line1": address_line1,
+			"address_line2": cstr(address_data.get("address2", "")).strip(),
+			"city": city,
+			"state": cstr(address_data.get("province", "")).strip(),
+			"pincode": cstr(address_data.get("zip", "")).strip(),
+			"country": country,
+			"phone": cstr(address_data.get("phone", "")).strip(),
+			"links": [{"link_doctype": "Customer", "link_name": customer_name}],
+		}
+	)
+	address.flags.ignore_mandatory = True
+	address.insert(ignore_permissions=True)
+	logger.info("Address created: %s", address.name)
 	return address.name
 
 
@@ -810,7 +828,14 @@ def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 	return contact.name
 
 
-def _create_sales_order(order: dict, store, customer_name: str, contact_name: str | None = None):
+def _create_sales_order(
+	order: dict,
+	store,
+	customer_name: str,
+	contact_name: str | None = None,
+	billing_address: str | None = None,
+	shipping_address: str | None = None,
+):
 	"""
 	Create a Sales Order from Shopify order data.
 
@@ -819,6 +844,8 @@ def _create_sales_order(order: dict, store, customer_name: str, contact_name: st
 		store: Shopify Store document
 		customer_name: Customer to use
 		contact_name: Contact to use (optional)
+		billing_address: Billing address name (optional)
+		shipping_address: Shipping address name (optional)
 
 	Returns:
 		Sales Order document
@@ -841,6 +868,8 @@ def _create_sales_order(order: dict, store, customer_name: str, contact_name: st
 			"shopify_fulfillment_status": order.get("fulfillment_status") or "unfulfilled",
 			"customer": customer_name,
 			"contact_person": contact_name,
+			"customer_address": billing_address,
+			"shipping_address_name": shipping_address,
 			"currency": order.get("currency"),
 			"transaction_date": getdate(order.get("created_at")) or nowdate(),
 			"delivery_date": getdate(order.get("created_at")) or nowdate(),
@@ -850,15 +879,6 @@ def _create_sales_order(order: dict, store, customer_name: str, contact_name: st
 			"taxes": taxes,
 		}
 	)
-
-	# Set customer address if available
-	shipping_address = order.get("shipping_address")
-	if shipping_address:
-		shopify_address_id = cstr(shipping_address.get("id", ""))
-		if shopify_address_id:
-			address_name = frappe.db.get_value("Address", {"shopify_address_id": shopify_address_id})
-			if address_name:
-				so.shipping_address_name = address_name
 
 	so.flags.ignore_mandatory = True
 	so.insert(ignore_permissions=True)
