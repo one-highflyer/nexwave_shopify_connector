@@ -5,7 +5,6 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "erpnext_field",
   "field_value",
   "column_break_1",
   "shopify_collection_id",
@@ -13,20 +12,12 @@
  ],
  "fields": [
   {
-   "fieldname": "erpnext_field",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "ERPNext Field",
-   "reqd": 1,
-   "description": "Field on Item to check (e.g., item_group, brand)"
-  },
-  {
    "fieldname": "field_value",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Field Value",
    "reqd": 1,
-   "description": "Value to match (e.g., Furniture, Outdoor)"
+   "description": "Collection name to match (e.g., Guided Journals, Outdoor)"
   },
   {
    "fieldname": "column_break_1",
@@ -38,7 +29,7 @@
    "in_list_view": 1,
    "label": "Shopify Collection ID",
    "reqd": 1,
-   "description": "Shopify collection GID (e.g., gid://shopify/Collection/123456)"
+   "description": "Shopify collection ID (numeric)"
   },
   {
    "fieldname": "shopify_collection_title",
@@ -51,7 +42,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-28 12:00:00.000000",
+ "modified": "2025-12-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store Collection Mapping",

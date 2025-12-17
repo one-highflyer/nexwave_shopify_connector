@@ -60,6 +60,43 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 - Map ERPNext fields to Shopify **standard fields** or **metafields**
 - Per-store mapping configuration
 
+### Item Sync Logic
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Item Sync Decision Flow                      │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │            Item eligible for Shopify Store?             │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │         Has shopify_product_id mapping?                 │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│              ┌──────────────┴──────────────┐                   │
+│              │                             │                   │
+│              ▼ YES                         ▼ NO                │
+│  ┌─────────────────────┐       ┌─────────────────────┐        │
+│  │  UPDATE existing    │       │  CREATE new         │        │
+│  │  Shopify product    │       │  Shopify product    │        │
+│  │                     │       │                     │        │
+│  │  Uses stored        │       │  Sets:              │        │
+│  │  product_id &       │       │  - SKU = item_code  │        │
+│  │  variant_id         │       │  - Track inventory  │        │
+│  │                     │       │    (if stock item)  │        │
+│  └─────────────────────┘       └─────────────────────┘        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Points:**
+- Sync is **one-way** (ERPNext → Shopify)
+- If no product ID mapping exists, a **new product is created** in Shopify
+- SKU is automatically set to the ERPNext `item_code`
+- Inventory tracking is enabled for stock items (`is_stock_item=1`)
+
+**For existing Shopify products:** Use the "Fetch Products & Map by SKU" action on the Shopify Store form to link existing Shopify products to ERPNext items by matching SKU = item_code.
+
 ### Item Eligibility & Filters
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -127,6 +164,22 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 - Orders routed to correct Company based on store configuration
 - **Global customers** (email-based lookup across stores)
 
+**Order Automation:**
+- Auto-submit Sales Order for paid orders
+- Auto-create Sales Invoice (requires auto-submit)
+- Auto-create Payment Entry (requires auto-create invoice)
+- Configurable Cash/Bank account for payment entries
+
+**Tax Handling:**
+- Map Shopify tax titles (e.g., "GST", "VAT") to ERPNext tax accounts
+- Shipping charges can be added as line item or tax entry
+- Tax rates preserved for GST reporting
+
+**Customer & Address Handling:**
+- Customer lookup by `shopify_customer_id` first, then by email
+- Addresses deduplicated by content (title, address_line1, city, country)
+- Both billing and shipping addresses set on Sales Order
+
 ### Inventory Sync (Push: NexWave → Shopify)
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -189,7 +242,8 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 |---------|--------|
 | **Item** | `shopify_stores` (table) |
 | **Customer** | `shopify_customer_id` |
-| **Sales Order** | `shopify_store`, `shopify_order_id`, `shopify_order_number` |
+| **Sales Order** | `shopify_store`, `shopify_order_id`, `shopify_order_number`, `shopify_financial_status`, `shopify_fulfillment_status` |
+| **Sales Order Item** | `shopify_item_discount` |
 | **Delivery Note** | `shopify_store`, `shopify_order_id`, `shopify_order_number` |
 | **Sales Invoice** | `shopify_store`, `shopify_order_id`, `shopify_order_number` |
 
@@ -229,6 +283,8 @@ bench --site [sitename] migrate
 nexwave_shopify_connector/
 ├── nexwave_shopify/
 │   ├── connection.py      # @shopify_session decorator, webhook endpoint
+│   ├── order.py           # Order sync logic (webhooks & manual sync)
+│   ├── product.py         # Product/item sync to Shopify
 │   ├── utils.py           # Logging, eligibility helpers
 │   └── doctype/
 │       ├── shopify_store/
