@@ -104,6 +104,12 @@ def sync_item_price_to_shopify(doc, method=None):
 	if not stores:
 		return
 
+	# TODO: This logic only considers explicit "Item Shopify Store" rows with enabled=1
+	# and ignores stores where the item is auto-eligible via store filters. Update to
+	# compute eligible stores the same way as sync_item_to_shopify by calling
+	# get_eligible_stores_for_item(item_code) (or merging that result with any explicit
+	# enabled rows) and iterate over that unified list to enqueue sync_item_to_store
+	# for each eligible store so filter-based eligibilities are included.
 	# Check if item is linked to any of these stores
 	for store_name in stores:
 		# Check if item has this store enabled
@@ -394,7 +400,14 @@ def _update_shopify_product(
 				# Update existing metafield
 				mf = existing_map[key_tuple]
 				mf.value = mf_data["value"]
-				mf.save()
+				if not mf.save():
+					logger.warning(
+						"Failed to update metafield %s.%s for product %s: %s",
+						mf_data["namespace"],
+						mf_data["key"],
+						product.id,
+						mf.errors.full_messages(),
+					)
 			else:
 				# Create new metafield
 				metafield = Metafield(
