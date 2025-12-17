@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import frappe
 from frappe import _
@@ -20,6 +20,7 @@ from nexwave_shopify_connector.nexwave_shopify.utils import (
 	get_eligible_stores_for_item,
 	get_item_shopify_store_row,
 )
+from nexwave_shopify_connector.utils.logger import get_logger
 
 # Fields that go on the product level
 PRODUCT_STANDARD_FIELDS = ["body_html", "vendor", "product_type", "tags", "handle"]
@@ -163,10 +164,13 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 		store_name: Shopify Store name
 		force: If True, skip change detection and force sync
 	"""
+	logger = get_logger()
+	logger.info("Syncing item %s to store %s", item_code, store_name)
 	item = frappe.get_doc("Item", item_code)
 	store = frappe.get_doc("Shopify Store", store_name)
 
 	if not store.enabled or not store.enable_item_sync:
+		logger.error("Store %s is not enabled or item sync is not enabled", store_name)
 		return
 
 	# Initialize API versions
@@ -177,6 +181,7 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 	access_token = store.get_password("access_token")
 
 	if not access_token:
+		logger.error("Access token not configured for store %s", store_name)
 		frappe.log_error(
 			title=f"Shopify Sync Error - {store_name}",
 			message=f"Access token not configured for store {store_name}",
@@ -190,6 +195,7 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 	current_hash = compute_sync_hash(item, store)
 	if not force and store_row and store_row.last_sync_hash == current_hash:
 		# No changes, skip sync
+		logger.info("No changes, skipping sync for item %s", item_code)
 		return
 
 	try:
@@ -205,6 +211,12 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 
 			if store_row and store_row.shopify_product_id:
 				# Update existing product
+				logger.info(
+					"Updating existing product %s, item %s, store %s",
+					store_row.shopify_product_id,
+					item_code,
+					store_name,
+				)
 				product = _update_shopify_product(
 					store_row.shopify_product_id,
 					store_row.shopify_variant_id,
@@ -214,15 +226,22 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 				)
 			else:
 				# Create new product
+				logger.info("Creating new product %s, item %s, store %s", item_code, store_name)
 				product = _create_shopify_product(product_data, variant_data, metafields_data)
 
 			# Sync collections if mapping configured
 			if collections_field:
+				logger.info(
+					"Syncing collections for product %s, item %s, store %s", product.id, item_code, store_name
+				)
 				_sync_product_collections(str(product.id), item, store, collections_field)
 
 			# Sync image if enabled
 			image_hash = None
 			if store.enable_image_sync:
+				logger.info(
+					"Syncing image for product %s, item %s, store %s", product.id, item_code, store_name
+				)
 				image_hash = _sync_item_image_to_shopify(item, store, product.id, store_row, force)
 
 			# Update Item Shopify Store row
@@ -237,7 +256,8 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 				reference_name=item_code,
 			)
 
-	except Exception:
+	except Exception as e:
+		logger.error("Failed to sync item %s to store %s: %s", item_code, store_name, str(e), exc_info=True)
 		create_shopify_log(
 			status="Error",
 			method="sync_item_to_store",
@@ -247,6 +267,8 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 			reference_doctype="Item",
 			reference_name=item_code,
 		)
+		frappe.db.commit()
+		raise
 
 
 def _init_shopify_api_versions():
@@ -256,7 +278,7 @@ def _init_shopify_api_versions():
 
 
 def _create_shopify_product(
-	product_data: Dict[str, Any], variant_data: Dict[str, Any], metafields_data: List[Dict[str, Any]]
+	product_data: dict[str, Any], variant_data: dict[str, Any], metafields_data: list[dict[str, Any]]
 ) -> Product:
 	"""
 	Create a new product in Shopify.
@@ -271,6 +293,7 @@ def _create_shopify_product(
 	"""
 	# Create product with product-level data only (no variants)
 	# Shopify auto-creates a default variant when product is saved
+	logger = get_logger()
 	product = Product()
 	for key, value in product_data.items():
 		setattr(product, key, value)
@@ -284,6 +307,7 @@ def _create_shopify_product(
 		for key, value in variant_data.items():
 			setattr(default_variant, key, value)
 		if not default_variant.save():
+			logger.error("Failed to update default variant: %s", default_variant.errors.full_messages())
 			raise Exception(f"Failed to update variant: {default_variant.errors.full_messages()}")
 
 	# Create metafields if any
@@ -306,10 +330,10 @@ def _create_shopify_product(
 
 def _update_shopify_product(
 	product_id: str,
-	variant_id: Optional[str],
-	product_data: Dict[str, Any],
-	variant_data: Dict[str, Any],
-	metafields_data: List[Dict[str, Any]],
+	variant_id: str | None,
+	product_data: dict[str, Any],
+	variant_data: dict[str, Any],
+	metafields_data: list[dict[str, Any]],
 ) -> Product:
 	"""
 	Update an existing product in Shopify.
@@ -324,6 +348,7 @@ def _update_shopify_product(
 	Returns:
 		Updated Product resource
 	"""
+	logger = get_logger()
 	product = Product.find(product_id)
 
 	# Update product fields
@@ -331,6 +356,7 @@ def _update_shopify_product(
 		setattr(product, key, value)
 
 	if not product.save():
+		logger.error("Failed to update product: %s", product.errors.full_messages())
 		raise Exception(f"Failed to update product: {product.errors.full_messages()}")
 
 	# Update variant if we have variant data
@@ -339,6 +365,7 @@ def _update_shopify_product(
 		for key, value in variant_data.items():
 			setattr(variant, key, value)
 		if not variant.save():
+			logger.error("Failed to update variant: %s", variant.errors.full_messages())
 			raise Exception(f"Failed to update variant: {variant.errors.full_messages()}")
 	elif variant_data and product.variants:
 		# Update first variant if no specific variant ID
@@ -376,7 +403,7 @@ def _update_shopify_product(
 	return product
 
 
-def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_hash: Optional[str] = None):
+def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_hash: str | None = None):
 	"""
 	Update or create Item Shopify Store child row with sync details.
 
@@ -387,6 +414,7 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 		sync_hash: Current sync hash
 		image_hash: Current image hash (optional)
 	"""
+	logger = get_logger()
 	store_row = get_item_shopify_store_row(item, store)
 
 	# Get first variant ID
@@ -407,6 +435,12 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 
 	if store_row:
 		# Update existing row
+		logger.info(
+			"Updating existing Item Shopify Store row %s, item %s, store %s",
+			store_row.name,
+			item.name,
+			store.name,
+		)
 		frappe.db.set_value(
 			"Item Shopify Store",
 			store_row.name,
@@ -415,6 +449,7 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 		)
 	else:
 		# Create new row
+		logger.info("Creating new row on Item Shopify Store for item %s, store %s", item.name, store.name)
 		row_data = {
 			"shopify_store": store.name,
 			"enabled": 1,
@@ -425,8 +460,6 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 		item.flags.ignore_validate = True
 		item.flags.ignore_mandatory = True
 		item.save(ignore_permissions=True)
-
-	frappe.db.commit()
 
 
 def build_product_payload(item, store) -> tuple:
@@ -489,7 +522,7 @@ def build_product_payload(item, store) -> tuple:
 	return product_data, variant_data, metafields_data, category_value, collections_field
 
 
-def _get_field_value(item, store, field_name: str, default_value: Optional[str] = None):
+def _get_field_value(item, store, field_name: str, default_value: str | None = None):
 	"""
 	Get field value from item, with special handling for certain fields.
 
@@ -515,7 +548,7 @@ def _get_field_value(item, store, field_name: str, default_value: Optional[str] 
 	return value
 
 
-def get_item_price(item, store) -> Optional[float]:
+def get_item_price(item, store) -> float | None:
 	"""
 	Get item price from store's configured price list.
 
@@ -788,7 +821,7 @@ def compute_sync_hash(item, store) -> str:
 	return hashlib.md5(hash_str.encode()).hexdigest()
 
 
-def _get_item_image_path(item) -> Optional[str]:
+def _get_item_image_path(item) -> str | None:
 	"""
 	Get the file path for item's primary image.
 
@@ -836,7 +869,7 @@ def _compute_image_hash(file_path: str) -> str:
 	return hash_md5.hexdigest()
 
 
-def _get_image_data_and_hash(item) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def _get_image_data_and_hash(item) -> tuple[str | None, str | None, str | None]:
 	"""
 	Get base64 encoded image data and hash for an item.
 
@@ -878,10 +911,7 @@ def _sync_product_image(product_id: str, image_data: str, filename: str) -> bool
 	Returns:
 		True if successful, False otherwise
 	"""
-	# First, delete existing images to avoid duplicates
-	existing_images = Image.find(product_id=product_id)
-	for img in existing_images:
-		img.destroy()
+	logger = get_logger()
 
 	# Create new image
 	image = Image()
@@ -890,14 +920,18 @@ def _sync_product_image(product_id: str, image_data: str, filename: str) -> bool
 	image.filename = filename
 
 	if not image.save():
-		raise Exception(f"Failed to upload image: {image.errors.full_messages()}")
+		logger.error("Failed to upload image for product %s: %s", product_id, image.errors.full_messages())
+		raise Exception(f"Failed to upload image for product {product_id}: {image.errors.full_messages()}")
+
+	# Delete existing images to avoid duplicates
+	existing_images = Image.find(product_id=product_id)
+	for img in existing_images:
+		img.destroy()
 
 	return True
 
 
-def _sync_item_image_to_shopify(
-	item, store, product_id: str, store_row, force: bool = False
-) -> Optional[str]:
+def _sync_item_image_to_shopify(item, store, product_id: str, store_row, force: bool = False) -> str | None:
 	"""
 	Sync item image to Shopify product if image has changed.
 
@@ -954,6 +988,7 @@ def sync_items_to_store(store_name: str):
 
 	# Also get items that match store filters but don't have explicit row
 	if store.item_filters:
+		# TODO: Optimize performance of this query and the logic
 		# Build filter query based on store filters
 		all_items = frappe.get_all("Item", filters={"disabled": 0}, pluck="name")
 		for item_code in all_items:

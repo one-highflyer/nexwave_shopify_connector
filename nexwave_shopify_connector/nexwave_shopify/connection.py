@@ -6,10 +6,10 @@ import functools
 import hashlib
 import hmac
 import json
-from typing import List, Optional, Union
 
 import frappe
 from frappe import _
+from frappe.model.document import Document
 from shopify.resources import Webhook
 from shopify.session import Session
 
@@ -26,6 +26,7 @@ WEBHOOK_EVENTS = [
 ]
 
 # Event to handler mapping
+# TODO: Implement orders/fulfilled event
 EVENT_MAPPER = {
 	"orders/create": "nexwave_shopify_connector.nexwave_shopify.order.sync_sales_order",
 	"orders/paid": "nexwave_shopify_connector.nexwave_shopify.order.process_paid_order",
@@ -33,7 +34,7 @@ EVENT_MAPPER = {
 }
 
 
-def shopify_session(shopify_store: Optional[Union[str, "Document"]] = None, allow_implicit: bool = False):
+def shopify_session(shopify_store: str | Document | None = None, allow_implicit: bool = False):
 	"""
 	Decorator that establishes a temporary Shopify API session for a specific store.
 
@@ -86,8 +87,8 @@ def shopify_session(shopify_store: Optional[Union[str, "Document"]] = None, allo
 
 
 def _resolve_shopify_store(
-	shopify_store: Optional[Union[str, "Document"]], allow_implicit: bool, kwargs: dict
-) -> Optional["Document"]:
+	shopify_store: str | Document | None, allow_implicit: bool, kwargs: dict
+) -> Document | None:
 	"""Resolve Shopify Store document from various inputs."""
 
 	# Check if store is passed in kwargs
@@ -141,7 +142,7 @@ def get_shopify_store(name_or_domain: str, require_enabled: bool = True) -> "Doc
 	return store
 
 
-def get_shopify_store_by_domain(shop_domain: str) -> Optional[str]:
+def get_shopify_store_by_domain(shop_domain: str) -> str | None:
 	"""
 	Get Shopify Store name by domain.
 
@@ -191,7 +192,7 @@ def normalize_shop_domain(domain: str) -> str:
 	return domain
 
 
-def get_callback_url(store: Optional["Document"] = None) -> str:
+def get_callback_url(store: Document | None = None) -> str:
 	"""
 	Get webhook callback URL for the current site.
 
@@ -224,7 +225,7 @@ def get_current_domain_name() -> str:
 		return frappe.request.host
 
 
-def register_webhooks(store: "Document") -> List[Webhook]:
+def register_webhooks(store: Document) -> list[Webhook]:
 	"""
 	Register required webhooks with Shopify for a specific store.
 
@@ -259,7 +260,7 @@ def register_webhooks(store: "Document") -> List[Webhook]:
 	return new_webhooks
 
 
-def unregister_webhooks(store: "Document") -> None:
+def unregister_webhooks(store: Document) -> None:
 	"""
 	Unregister all webhooks from Shopify that correspond to current site URL.
 

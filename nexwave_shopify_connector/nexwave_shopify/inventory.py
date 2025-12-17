@@ -314,7 +314,11 @@ def sync_single_item_inventory(item_code: str, store_name: Optional[str] = None)
 
 		try:
 			with Session.temp(store.shop_domain, api_version, access_token):
-				item_data = {"item_code": item_code, "shopify_variant_id": store_row.shopify_variant_id}
+				item_data = {
+					"item_code": item_code,
+					"shopify_variant_id": store_row.shopify_variant_id,
+					"shopify_product_id": store_row.shopify_product_id,
+				}
 				_sync_item_inventory(item_data, store)
 
 		except Exception as e:
