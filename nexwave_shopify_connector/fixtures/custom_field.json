@@ -163,7 +163,7 @@
 		"fieldtype": "Select",
 		"insert_after": "shopify_order_number",
 		"label": "Shopify Financial Status",
-		"options": "\npaid\npending\npartially_paid\nrefunded\nvoided",
+		"options": "\nauthorized\nexpired\npaid\npartially_paid\npartially_refunded\npending\nrefunded\nvoided",
 		"read_only": 1
 	},
 	{
@@ -174,7 +174,7 @@
 		"fieldtype": "Select",
 		"insert_after": "shopify_financial_status",
 		"label": "Shopify Fulfillment Status",
-		"options": "\nfulfilled\nunfulfilled\npartial",
+		"options": "\nfulfilled\nnot_eligible\npartial\nunfulfilled",
 		"read_only": 1
 	},
 	{
