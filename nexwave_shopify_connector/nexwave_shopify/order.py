@@ -890,6 +890,25 @@ def _create_sales_order(
 	return so
 
 
+def _get_warehouse_for_location(location_id: str | None, store) -> str | None:
+	"""Get ERPNext warehouse for a Shopify location ID.
+
+	Args:
+		location_id: Shopify location ID from line_item.origin_location.id
+		store: Shopify Store document
+
+	Returns:
+		Warehouse name or None
+	"""
+	if location_id:
+		for mapping in store.warehouse_mapping:
+			if cstr(mapping.shopify_location_id) == cstr(location_id):
+				return mapping.erpnext_warehouse
+
+	# Fall back to store's default warehouse
+	return store.warehouse
+
+
 def _get_order_items(order: dict, store) -> list:
 	"""
 	Map Shopify line items to Sales Order items.
@@ -903,6 +922,7 @@ def _get_order_items(order: dict, store) -> list:
 	Returns:
 		List of item dicts for Sales Order
 	"""
+	logger = get_logger()
 	items = []
 	line_items = order.get("line_items", [])
 	taxes_inclusive = order.get("taxes_included", False)
@@ -921,12 +941,13 @@ def _get_order_items(order: dict, store) -> list:
 			item_code = frappe.db.get_value("Item", {"item_code": sku})
 
 		if not item_code:
-			frappe.log_error(
-				title=f"Shopify Order Sync - SKU Not Found",
-				message=f"SKU '{sku}' not found in ERPNext for order {order.get('name')}. "
-				f"Line item: {line_item.get('title')}",
+			logger.error(
+				"Item with SKU '%s' not found. Line item: %s",
+				sku,
+				order.get("name"),
+				line_item.get("title"),
 			)
-			raise ValueError(f"Item with SKU '{sku}' not found in ERPNext. Please create the item first.")
+			raise ValueError(f"Item with SKU '{sku}' not found. Please create the item first.")
 
 		# Calculate item price
 		price = _get_item_price(line_item, taxes_inclusive)
@@ -936,6 +957,11 @@ def _get_order_items(order: dict, store) -> list:
 		qty = cint(line_item.get("quantity")) or 1
 		per_item_discount = total_discount / qty if qty else 0
 
+		# Get warehouse from location mapping
+		origin_location = line_item.get("origin_location") or {}
+		location_id = origin_location.get("id")
+		warehouse = _get_warehouse_for_location(location_id, store)
+
 		items.append(
 			{
 				"item_code": item_code,
@@ -943,7 +969,7 @@ def _get_order_items(order: dict, store) -> list:
 				"rate": price,
 				"qty": qty,
 				"delivery_date": delivery_date,
-				"warehouse": store.warehouse,
+				"warehouse": warehouse,
 				"shopify_item_discount": per_item_discount,
 			}
 		)
