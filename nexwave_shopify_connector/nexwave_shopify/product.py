@@ -323,7 +323,14 @@ def _create_shopify_product(
 					"owner_id": product.id,
 				}
 			)
-			metafield.save()
+			if not metafield.save():
+				logger.warning(
+					"Failed to create metafield %s.%s for product %s: %s",
+					mf_data["namespace"],
+					mf_data["key"],
+					product.id,
+					metafield.errors.full_messages(),
+				)
 
 	return product
 
@@ -372,7 +379,9 @@ def _update_shopify_product(
 		variant = product.variants[0]
 		for key, value in variant_data.items():
 			setattr(variant, key, value)
-		variant.save()
+		if not variant.save():
+			logger.error("Failed to update variant: %s", variant.errors.full_messages())
+			raise Exception(f"Failed to update variant: {variant.errors.full_messages()}")
 
 	# Update metafields
 	if metafields_data:
@@ -923,10 +932,11 @@ def _sync_product_image(product_id: str, image_data: str, filename: str) -> bool
 		logger.error("Failed to upload image for product %s: %s", product_id, image.errors.full_messages())
 		raise Exception(f"Failed to upload image for product {product_id}: {image.errors.full_messages()}")
 
-	# Delete existing images to avoid duplicates
+	# Delete existing images to avoid duplicates, but skip the newly uploaded one
 	existing_images = Image.find(product_id=product_id)
 	for img in existing_images:
-		img.destroy()
+		if img.id != image.id:
+			img.destroy()
 
 	return True
 
