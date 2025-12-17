@@ -407,7 +407,14 @@ def _update_shopify_product(
 						"owner_id": product_id,
 					}
 				)
-				metafield.save()
+				if not metafield.save():
+					logger.warning(
+						"Failed to create metafield %s.%s for product %s: %s",
+						mf_data["namespace"],
+						mf_data["key"],
+						product.id,
+						metafield.errors.full_messages(),
+					)
 
 	return product
 
