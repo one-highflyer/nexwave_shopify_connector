@@ -977,6 +977,7 @@ def _get_order_taxes(order: dict, store, items: list) -> list:
 				{
 					"charge_type": "Actual",
 					"account_head": tax_account,
+					"rate": flt(tax.get("rate")) * 100,
 					"description": f"{tax.get('title')} - {flt(tax.get('rate')) * 100:.2f}%",
 					"tax_amount": flt(tax.get("price")),
 					"cost_center": store.cost_center,
@@ -1042,6 +1043,7 @@ def _add_shipping_charges(order: dict, store, items: list, taxes: list):
 				{
 					"charge_type": "Actual",
 					"account_head": tax_account,
+					"rate": flt(tax.get("rate")) * 100,
 					"description": f"{tax.get('title')} - {flt(tax.get('rate')) * 100:.2f}%",
 					"tax_amount": flt(tax.get("price")),
 					"cost_center": store.cost_center,
