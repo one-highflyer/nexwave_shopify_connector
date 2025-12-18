@@ -903,6 +903,7 @@ def _get_order_items(order: dict, store) -> list:
 	Returns:
 		List of item dicts for Sales Order
 	"""
+	logger = get_logger()
 	items = []
 	line_items = order.get("line_items", [])
 	taxes_inclusive = order.get("taxes_included", False)
@@ -921,12 +922,13 @@ def _get_order_items(order: dict, store) -> list:
 			item_code = frappe.db.get_value("Item", {"item_code": sku})
 
 		if not item_code:
-			frappe.log_error(
-				title=f"Shopify Order Sync - SKU Not Found",
-				message=f"SKU '{sku}' not found in ERPNext for order {order.get('name')}. "
-				f"Line item: {line_item.get('title')}",
+			logger.error(
+				"Item with SKU '%s' not found. Order: %s, Line item: %s",
+				sku,
+				order.get("name"),
+				line_item.get("title"),
 			)
-			raise ValueError(f"Item with SKU '{sku}' not found in ERPNext. Please create the item first.")
+			raise ValueError(f"Item with SKU '{sku}' not found. Please create the item first.")
 
 		# Calculate item price
 		price = _get_item_price(line_item, taxes_inclusive)
