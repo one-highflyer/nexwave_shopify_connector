@@ -923,7 +923,7 @@ def _get_order_items(order: dict, store) -> list:
 
 		if not item_code:
 			logger.error(
-				"Item with SKU '%s' not found. Line item: %s",
+				"Item with SKU '%s' not found. Order: %s, Line item: %s",
 				sku,
 				order.get("name"),
 				line_item.get("title"),
