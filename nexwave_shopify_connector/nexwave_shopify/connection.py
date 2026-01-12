@@ -70,9 +70,10 @@ def shopify_session(shopify_store: str | Document | None = None, allow_implicit:
 			# Set store context
 			frappe.flags.shopify_store = store.name
 
-			# Get auth details
+			# Get auth details - supports both Legacy and OAuth methods
 			api_version = store.api_version or DEFAULT_API_VERSION
-			auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
+			access_token = get_access_token(store)
+			auth_details = (store.shop_domain, api_version, access_token)
 
 			try:
 				with Session.temp(*auth_details):
@@ -190,6 +191,58 @@ def normalize_shop_domain(domain: str) -> str:
 		domain = domain.split("?")[0]
 
 	return domain
+
+
+def get_access_token(store: "Document") -> str:
+	"""
+	Get access token for the store based on auth_method.
+
+	- Legacy: Returns token from store.access_token field
+	- OAuth: Returns token from Token Cache via Connected App
+
+	Args:
+		store: Shopify Store document
+
+	Returns:
+		Access token string
+
+	Raises:
+		frappe.ValidationError: If token cannot be retrieved
+	"""
+	auth_method = getattr(store, "auth_method", None) or "Legacy (Access Token)"
+
+	if auth_method == "OAuth":
+		if not store.connected_app:
+			frappe.throw(_("Connected App is not configured for store {0}").format(store.name))
+
+		if not store.connected_user:
+			frappe.throw(
+				_("OAuth not connected for store {0}. Please click 'Connect to Shopify' to authorize.").format(
+					store.name
+				)
+			)
+
+		connected_app = frappe.get_doc("Connected App", store.connected_app)
+		token_cache = connected_app.get_active_token(store.connected_user)
+
+		if not token_cache:
+			frappe.throw(
+				_("OAuth token not found or expired for store {0}. Please reconnect to Shopify.").format(store.name)
+			)
+
+		access_token = token_cache.get_password("access_token", raise_exception=False)
+		if not access_token:
+			frappe.throw(
+				_("OAuth access token is empty for store {0}. Please reconnect to Shopify.").format(store.name)
+			)
+
+		return access_token
+	else:
+		# Legacy method
+		access_token = store.get_password("access_token")
+		if not access_token:
+			frappe.throw(_("Access Token is required for store {0}").format(store.name))
+		return access_token
 
 
 def get_callback_url(store: Document | None = None) -> str:

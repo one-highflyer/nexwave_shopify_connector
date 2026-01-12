@@ -11,8 +11,12 @@
   "section_break_auth",
   "shop_domain",
   "api_version",
+  "auth_method",
   "column_break_auth",
   "access_token",
+  "connected_app",
+  "connected_user",
+  "oauth_status",
   "shared_secret",
   "section_break_erpnext",
   "company",
@@ -91,14 +95,51 @@
    "label": "API Version"
   },
   {
+   "default": "Legacy (Access Token)",
+   "description": "Choose how to authenticate with Shopify",
+   "fieldname": "auth_method",
+   "fieldtype": "Select",
+   "label": "Authentication Method",
+   "options": "Legacy (Access Token)\nOAuth",
+   "reqd": 1
+  },
+  {
    "fieldname": "column_break_auth",
    "fieldtype": "Column Break"
   },
   {
+   "depends_on": "eval:doc.auth_method === 'Legacy (Access Token)'",
    "fieldname": "access_token",
    "fieldtype": "Password",
    "label": "Access Token",
-   "mandatory_depends_on": "eval:doc.enabled"
+   "mandatory_depends_on": "eval:doc.enabled && doc.auth_method === 'Legacy (Access Token)'"
+  },
+  {
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "description": "Connected App with Shopify OAuth credentials for this store",
+   "fieldname": "connected_app",
+   "fieldtype": "Link",
+   "label": "Connected App",
+   "mandatory_depends_on": "eval:doc.auth_method === 'OAuth'",
+   "options": "Connected App"
+  },
+  {
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "description": "User who authorized the OAuth connection",
+   "fieldname": "connected_user",
+   "fieldtype": "Link",
+   "label": "Connected User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "Not Connected",
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "fieldname": "oauth_status",
+   "fieldtype": "Select",
+   "label": "OAuth Status",
+   "options": "Not Connected\nConnected",
+   "read_only": 1
   },
   {
    "description": "For webhook HMAC validation",
@@ -403,7 +444,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-12-17 03:18:40.507653",
+ "modified": "2026-01-12 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

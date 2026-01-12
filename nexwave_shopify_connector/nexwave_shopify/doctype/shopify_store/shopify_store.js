@@ -3,8 +3,19 @@
 
 frappe.ui.form.on("Shopify Store", {
 	refresh(frm) {
+		// Show OAuth status indicator
+		if (frm.doc.auth_method === "OAuth") {
+			frm.trigger("show_oauth_status");
+		}
+
 		// Add custom buttons
 		if (!frm.is_new()) {
+			// Show "Connect to Shopify" button for OAuth stores
+			if (frm.doc.auth_method === "OAuth" && frm.doc.connected_app) {
+				frm.add_custom_button(__("Connect to Shopify"), () => {
+					frm.trigger("initiate_oauth");
+				}, __("Actions"));
+			}
 			frm.add_custom_button(__("Test Connection"), function () {
 				frm.call({
 					method: "test_connection",
@@ -234,5 +245,68 @@ frappe.ui.form.on("Shopify Store", {
 		frm.set_value("default_sales_tax_account", "");
 		frm.set_value("default_shipping_charges_account", "");
 		frm.set_value("cash_bank_account", "");
+	},
+
+	auth_method(frm) {
+		// Clear OAuth fields when switching to Legacy
+		if (frm.doc.auth_method === "Legacy (Access Token)") {
+			frm.set_value("connected_app", "");
+			frm.set_value("connected_user", "");
+			frm.set_value("oauth_status", "Not Connected");
+		}
+		// Clear access_token when switching to OAuth
+		if (frm.doc.auth_method === "OAuth") {
+			frm.set_value("access_token", "");
+		}
+	},
+
+	initiate_oauth(frm) {
+		if (!frm.doc.connected_app) {
+			frappe.msgprint(__("Please select a Connected App first."));
+			return;
+		}
+
+		// Save the document first if there are unsaved changes
+		if (frm.is_dirty()) {
+			frappe.msgprint(__("Please save the document before connecting to Shopify."));
+			return;
+		}
+
+		// Build success_uri with store identifier
+		const success_uri = `/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback?shopify_store=${encodeURIComponent(frm.doc.name)}`;
+
+		frappe.call({
+			method: "frappe.integrations.doctype.connected_app.connected_app.initiate_web_application_flow",
+			args: {
+				connected_app: frm.doc.connected_app,
+				success_uri: success_uri,
+				user: frappe.session.user
+			},
+			freeze: true,
+			freeze_message: __("Redirecting to Shopify..."),
+			callback: (r) => {
+				if (r.message) {
+					// Redirect to Shopify authorization page
+					window.location.href = r.message;
+				}
+			},
+			error: (r) => {
+				frappe.msgprint(__("Failed to initiate OAuth flow. Please check the Connected App configuration."));
+			}
+		});
+	},
+
+	show_oauth_status(frm) {
+		if (frm.doc.oauth_status === "Connected" && frm.doc.connected_user) {
+			frm.dashboard.set_headline_alert(
+				__("Connected to Shopify via OAuth as {0}", [frm.doc.connected_user]),
+				"green"
+			);
+		} else if (frm.doc.connected_app) {
+			frm.dashboard.set_headline_alert(
+				__("OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize."),
+				"yellow"
+			);
+		}
 	}
 });

@@ -8,7 +8,7 @@ from shopify.api_version import ApiVersion
 from shopify.resources import CustomCollection, Location, Shop, SmartCollection
 from shopify.session import Session
 
-from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
+from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION, get_access_token
 
 
 class ShopifyStore(Document):
@@ -42,7 +42,10 @@ class ShopifyStore(Document):
 		access_token: DF.Password | None
 		add_shipping_as_item: DF.Check
 		api_version: DF.Data | None
+		auth_method: DF.Literal["Legacy (Access Token)", "OAuth"]
 		auto_create_collections: DF.Check
+		connected_app: DF.Link | None
+		connected_user: DF.Link | None
 		auto_create_invoice: DF.Check
 		auto_create_payment_entry: DF.Check
 		auto_submit_sales_order: DF.Check
@@ -65,6 +68,7 @@ class ShopifyStore(Document):
 		item_group: DF.Link | None
 		last_inventory_sync: DF.Datetime | None
 		last_order_sync: DF.Datetime | None
+		oauth_status: DF.Literal["Not Connected", "Connected"]
 		price_list: DF.Link | None
 		sales_invoice_series: DF.Literal[None]
 		sales_order_series: DF.Literal[None]
@@ -82,6 +86,7 @@ class ShopifyStore(Document):
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
+		self.validate_auth_method()
 
 	def normalize_shop_domain(self):
 		"""Normalize shop domain to just the domain without protocol or trailing slashes."""
@@ -98,16 +103,34 @@ class ShopifyStore(Document):
 				domain = domain[:-6]
 			self.shop_domain = domain
 
+	def validate_auth_method(self):
+		"""Validate and clean up fields based on authentication method."""
+		auth_method = self.auth_method or "Legacy (Access Token)"
+
+		if auth_method == "OAuth":
+			# Clear legacy access_token when using OAuth
+			if self.access_token:
+				self.access_token = None
+		else:
+			# Clear OAuth fields when using Legacy
+			if self.connected_app:
+				self.connected_app = None
+			if self.connected_user:
+				self.connected_user = None
+			if self.oauth_status and self.oauth_status != "Not Connected":
+				self.oauth_status = "Not Connected"
+
 	def on_update(self):
 		# TODO: Handle webhook registration/deregistration
 		pass
 
 	def _get_auth_details(self):
-		"""Get authentication details for Shopify API session."""
+		"""Get authentication details for Shopify API session.
+
+		Supports both Legacy (Access Token) and OAuth authentication methods.
+		"""
 		api_version = self.api_version or DEFAULT_API_VERSION
-		access_token = self.get_password("access_token")
-		if not access_token:
-			frappe.throw(_("Access Token is required"))
+		access_token = get_access_token(self)
 		return (self.shop_domain, api_version, access_token)
 
 	def _init_shopify_api_versions(self):
