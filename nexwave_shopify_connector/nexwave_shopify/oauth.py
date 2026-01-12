@@ -27,6 +27,13 @@ def callback(shopify_store: str = None):
 
     store = frappe.get_doc("Shopify Store", shopify_store)
 
+    # Verify the current user has permission to modify this store
+    if not store.has_permission("write"):
+        frappe.throw(
+            _("You do not have permission to connect this Shopify Store"),
+            frappe.PermissionError
+        )
+
     if store.auth_method != "OAuth":
         frappe.throw(_("Store is not configured for OAuth authentication"))
 
