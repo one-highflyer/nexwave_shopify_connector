@@ -275,24 +275,28 @@ frappe.ui.form.on("Shopify Store", {
 		// Build success_uri with store identifier
 		const success_uri = `/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback?shopify_store=${encodeURIComponent(frm.doc.name)}`;
 
-		frappe.call({
-			method: "frappe.integrations.doctype.connected_app.connected_app.initiate_web_application_flow",
-			args: {
-				connected_app: frm.doc.connected_app,
-				success_uri: success_uri,
-				user: frappe.session.user
-			},
-			freeze: true,
-			freeze_message: __("Redirecting to Shopify..."),
-			callback: (r) => {
-				if (r.message) {
-					// Redirect to Shopify authorization page
-					window.location.href = r.message;
+		// Load Connected App document and call the method on it
+		frappe.model.with_doc("Connected App", frm.doc.connected_app, () => {
+			const connected_app = frappe.get_doc("Connected App", frm.doc.connected_app);
+			frappe.call({
+				doc: connected_app,
+				method: "initiate_web_application_flow",
+				args: {
+					success_uri: success_uri,
+					user: frappe.session.user
+				},
+				freeze: true,
+				freeze_message: __("Redirecting to Shopify..."),
+				callback: (r) => {
+					if (r.message) {
+						// Redirect to Shopify authorization page
+						window.location.href = r.message;
+					}
+				},
+				error: (r) => {
+					frappe.msgprint(__("Failed to initiate OAuth flow. Please check the Connected App configuration."));
 				}
-			},
-			error: (r) => {
-				frappe.msgprint(__("Failed to initiate OAuth flow. Please check the Connected App configuration."));
-			}
+			});
 		});
 	},
 
