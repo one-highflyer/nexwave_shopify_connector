@@ -225,8 +225,6 @@ def callback():
 	token_data = response.json()
 	access_token = token_data.get("access_token")
 
-	logger.info("Token data: %s", token_data)
-
 	if not access_token:
 		logger.error("No access token in response: %s", token_data)
 		frappe.throw(_("No access token received from Shopify"))
