@@ -11,8 +11,14 @@
   "section_break_auth",
   "shop_domain",
   "api_version",
+  "auth_method",
   "column_break_auth",
   "access_token",
+  "client_id",
+  "client_secret",
+  "callback_url",
+  "connected_user",
+  "oauth_status",
   "shared_secret",
   "section_break_erpnext",
   "company",
@@ -86,19 +92,72 @@
   },
   {
    "default": "2024-01",
+   "description": "Default \"2024-01\"",
    "fieldname": "api_version",
    "fieldtype": "Data",
    "label": "API Version"
+  },
+  {
+   "default": "Legacy (Access Token)",
+   "description": "Choose how to authenticate with Shopify",
+   "fieldname": "auth_method",
+   "fieldtype": "Select",
+   "label": "Authentication Method",
+   "options": "Legacy (Access Token)\nOAuth",
+   "reqd": 1
   },
   {
    "fieldname": "column_break_auth",
    "fieldtype": "Column Break"
   },
   {
+   "depends_on": "eval:doc.auth_method === 'Legacy (Access Token)'",
    "fieldname": "access_token",
    "fieldtype": "Password",
    "label": "Access Token",
-   "mandatory_depends_on": "eval:doc.enabled"
+   "mandatory_depends_on": "eval:doc.enabled && doc.auth_method === 'Legacy (Access Token)'"
+  },
+  {
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "description": "Client ID from Shopify Dev Dashboard",
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID",
+   "mandatory_depends_on": "eval:doc.auth_method === 'OAuth'"
+  },
+  {
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "description": "Client Secret from Shopify Dev Dashboard",
+   "fieldname": "client_secret",
+   "fieldtype": "Password",
+   "label": "Client Secret",
+   "mandatory_depends_on": "eval:doc.auth_method === 'OAuth'"
+  },
+  {
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "description": "Copy this URL to your Shopify app's Allowed redirection URL(s)",
+   "fieldname": "callback_url",
+   "fieldtype": "Data",
+   "label": "Callback URL",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "description": "User who authorized the OAuth connection",
+   "fieldname": "connected_user",
+   "fieldtype": "Link",
+   "label": "Connected User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "Not Connected",
+   "depends_on": "eval:doc.auth_method === 'OAuth'",
+   "fieldname": "oauth_status",
+   "fieldtype": "Select",
+   "label": "OAuth Status",
+   "options": "Not Connected\nConnected",
+   "read_only": 1
   },
   {
    "description": "For webhook HMAC validation",
@@ -402,8 +461,18 @@
   }
  ],
  "index_web_pages_for_search": 1,
- "links": [],
- "modified": "2025-12-17 03:18:40.507653",
+ "links": [
+  {
+   "link_doctype": "Sales Order",
+   "link_fieldname": "shopify_store"
+  },
+  {
+   "link_doctype": "Item",
+   "link_fieldname": "shopify_store",
+   "table_fieldname": "shopify_stores"
+  }
+ ],
+ "modified": "2026-01-15 23:06:55.323810",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

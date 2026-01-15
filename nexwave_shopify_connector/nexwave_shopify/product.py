@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
@@ -21,6 +21,9 @@ from nexwave_shopify_connector.nexwave_shopify.utils import (
 	get_item_shopify_store_row,
 )
 from nexwave_shopify_connector.utils.logger import get_logger
+
+if TYPE_CHECKING:
+	from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store import ShopifyStore
 
 # Fields that go on the product level
 PRODUCT_STANDARD_FIELDS = ["body_html", "vendor", "product_type", "tags", "handle"]
@@ -1006,9 +1009,12 @@ def sync_items_to_store(store_name: str):
 	Args:
 		store_name: Shopify Store name
 	"""
-	store = frappe.get_doc("Shopify Store", store_name)
+	logger = get_logger()
+	logger.info("Syncing all items to Shopify store: %s", store_name)
+	store: ShopifyStore = frappe.get_doc("Shopify Store", store_name)
 
 	if not store.enabled or not store.enable_item_sync:
+		logger.error("Shopify store: %s is not enabled or item sync is not enabled", store_name)
 		frappe.throw(_("Item sync is not enabled for this store"))
 
 	# Get all items that have this store in shopify_stores
@@ -1050,3 +1056,4 @@ def sync_items_to_store(store_name: str):
 	frappe.msgprint(
 		_("Queued {0} items for sync to {1}").format(len(items_to_sync), store_name), indicator="green"
 	)
+	logger.info("Successfully queued %s items for sync to Shopify store: %s", len(items_to_sync), store_name)

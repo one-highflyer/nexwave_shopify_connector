@@ -1,7 +1,7 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import frappe
 from frappe import _
@@ -12,6 +12,10 @@ from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
+from nexwave_shopify_connector.utils.logger import get_logger
+
+if TYPE_CHECKING:
+	from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store import ShopifyStore
 
 
 def update_inventory_on_shopify():
@@ -66,6 +70,8 @@ def sync_store_inventory(store_name: str):
 	Args:
 		store_name: Shopify Store name
 	"""
+	logger = get_logger()
+	logger.info("Syncing inventory for Shopify store: %s", store_name)
 	store = frappe.get_doc("Shopify Store", store_name)
 
 	if not store.enabled or not store.enable_inventory_sync:
@@ -73,6 +79,7 @@ def sync_store_inventory(store_name: str):
 
 	# Check warehouse mappings
 	if not store.warehouse_mapping:
+		logger.error("No warehouse mappings configured for inventory sync for Shopify store: %s", store_name)
 		frappe.log_error(
 			title=f"Shopify Inventory Sync - {store_name}",
 			message="No warehouse mappings configured for inventory sync",
@@ -97,6 +104,7 @@ def sync_store_inventory(store_name: str):
 	items_to_sync = get_items_with_shopify_ids(store_name)
 
 	if not items_to_sync:
+		logger.warning("No items to sync for Shopify store: %s", store_name)
 		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
 		frappe.db.commit()
 		return
@@ -106,11 +114,21 @@ def sync_store_inventory(store_name: str):
 
 	try:
 		with Session.temp(store.shop_domain, api_version, access_token):
+			logger.info(
+				"Syncing inventory for %s items for Shopify store: %s", len(items_to_sync), store_name
+			)
 			for item_data in items_to_sync:
 				try:
 					_sync_item_inventory(item_data, store)
 					sync_count += 1
 				except Exception as e:
+					logger.error(
+						"Failed to sync inventory for %s items for Shopify store: %s, error: %s",
+						item_data["item_code"],
+						store_name,
+						str(e),
+						exc_info=True,
+					)
 					error_count += 1
 					# Log individual item failure to NexWave Shopify Log
 					create_shopify_log(
@@ -139,6 +157,13 @@ def sync_store_inventory(store_name: str):
 		else:
 			status = "Success"  # All items synced
 
+		logger.info(
+			"Inventory sync completed for Shopify store: %s, status: %s, errors: %s",
+			store_name,
+			status,
+			error_count,
+		)
+
 		create_shopify_log(
 			status=status,
 			method="sync_store_inventory",
@@ -150,6 +175,9 @@ def sync_store_inventory(store_name: str):
 		)
 
 	except Exception as e:
+		logger.error(
+			"Store-level sync error for Shopify store: %s, error: %s", store_name, str(e), exc_info=True
+		)
 		create_shopify_log(
 			status="Error",
 			method="sync_store_inventory",
@@ -337,15 +365,20 @@ def manual_inventory_sync(store_name: str):
 	Args:
 		store_name: Shopify Store name
 	"""
-	store = frappe.get_doc("Shopify Store", store_name)
+	logger = get_logger()
+	logger.info("Manual inventory sync for Shopify store: %s", store_name)
+	store: ShopifyStore = frappe.get_doc("Shopify Store", store_name)
 
 	if not store.enabled:
+		logger.error("Shopify store: %s is not enabled", store_name)
 		frappe.throw(_("Store is not enabled"))
 
 	if not store.enable_inventory_sync:
+		logger.error("Inventory sync is not enabled for Shopify store: %s", store_name)
 		frappe.throw(_("Inventory sync is not enabled for this store"))
 
 	if not store.warehouse_mapping:
+		logger.error("No warehouse mappings configured for Shopify store: %s", store_name)
 		frappe.throw(_("No warehouse mappings configured"))
 
 	# Enqueue sync job
@@ -357,3 +390,4 @@ def manual_inventory_sync(store_name: str):
 	)
 
 	frappe.msgprint(_("Inventory sync has been queued for {0}").format(store_name), indicator="green")
+	logger.info("Successfully queued inventory sync for Shopify store: %s", store_name)

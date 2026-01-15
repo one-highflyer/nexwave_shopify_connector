@@ -3,8 +3,19 @@
 
 frappe.ui.form.on("Shopify Store", {
 	refresh(frm) {
+		// Show OAuth status (callback_url is set by backend on save)
+		if (frm.doc.auth_method === "OAuth") {
+			frm.trigger("show_oauth_status");
+		}
+
 		// Add custom buttons
 		if (!frm.is_new()) {
+			// Show "Connect to Shopify" button for OAuth stores
+			if (frm.doc.auth_method === "OAuth" && frm.doc.client_id) {
+				frm.add_custom_button(__("Connect to Shopify"), () => {
+					frm.trigger("initiate_oauth");
+				}, __("Actions"));
+			}
 			frm.add_custom_button(__("Test Connection"), function () {
 				frm.call({
 					method: "test_connection",
@@ -234,5 +245,67 @@ frappe.ui.form.on("Shopify Store", {
 		frm.set_value("default_sales_tax_account", "");
 		frm.set_value("default_shipping_charges_account", "");
 		frm.set_value("cash_bank_account", "");
+	},
+
+	auth_method(frm) {
+		// Clear OAuth fields when switching to Legacy
+		if (frm.doc.auth_method === "Legacy (Access Token)") {
+			frm.set_value("client_id", "");
+			frm.set_value("client_secret", "");
+			frm.set_value("callback_url", "");
+			frm.set_value("connected_user", "");
+			frm.set_value("oauth_status", "Not Connected");
+		}
+	},
+
+	initiate_oauth(frm) {
+		if (!frm.doc.client_id) {
+			frappe.msgprint(__("Please enter the Client ID first."));
+			return;
+		}
+
+		if (!frm.doc.client_secret) {
+			frappe.msgprint(__("Please enter the Client Secret first."));
+			return;
+		}
+
+		// Save the document first if there are unsaved changes
+		if (frm.is_dirty()) {
+			frappe.msgprint(__("Please save the document before connecting to Shopify."));
+			return;
+		}
+
+		// Call our authorize endpoint
+		frappe.call({
+			method: "nexwave_shopify_connector.nexwave_shopify.oauth.authorize",
+			args: {
+				shopify_store: frm.doc.name
+			},
+			freeze: true,
+			freeze_message: __("Redirecting to Shopify..."),
+			callback: (r) => {
+				if (r.message) {
+					// Redirect to Shopify authorization page
+					window.location.href = r.message;
+				}
+			},
+			error: (r) => {
+				frappe.msgprint(__("Failed to initiate OAuth flow. Please check your Client ID and Client Secret."));
+			}
+		});
+	},
+
+	show_oauth_status(frm) {
+		if (frm.doc.oauth_status === "Connected" && frm.doc.connected_user) {
+			frm.dashboard.set_headline_alert(
+				__("Connected to Shopify via OAuth as {0}", [frm.doc.connected_user]),
+				"green"
+			);
+		} else if (frm.doc.client_id) {
+			frm.dashboard.set_headline_alert(
+				__("OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize."),
+				"yellow"
+			);
+		}
 	}
 });
