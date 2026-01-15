@@ -271,7 +271,9 @@ bench --site [sitename] migrate
 The connector supports two authentication methods:
 
 ### Legacy (Access Token)
-Manual access token entry - suitable for custom apps created before January 2025.
+Manual access token entry - suitable for existing custom apps created before January 2026.
+
+> **Note:** Shopify deprecated legacy custom apps from 1 January 2026. New integrations should use OAuth.
 
 1. Create a Custom App in Shopify Admin → Settings → Apps and sales channels → Develop apps
 2. Configure required API scopes
@@ -279,7 +281,7 @@ Manual access token entry - suitable for custom apps created before January 2025
 4. Enter the token in the Shopify Store's `Access Token` field
 
 ### OAuth 2.0 (Recommended)
-OAuth flow for Shopify Dev Dashboard apps - required for apps created after January 2025.
+OAuth flow for Shopify Dev Dashboard apps - required for new apps created after January 2026.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -301,21 +303,24 @@ The OAuth flow is self-contained within the Shopify Store document - no separate
 #### OAuth Setup Steps
 
 **Step 1: Create Shopify App (Dev Dashboard)**
-1. Go to [Shopify Partners](https://partners.shopify.com) → Apps → Create app
-2. Under "Configuration", add your redirect URI (shown on the Shopify Store form as "Callback URL"):
+1. Go to Shopify Admin → Settings → Develop Apps → "Develop apps in Dev Dashboard"
+2. This opens [Shopify Dev Dashboard](https://dev.shopify.com/) - click **Apps** → **Create app**
+3. Create a new version and add your redirect URI:
    ```
    https://{your-site}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback
    ```
-3. Note the Client ID and Client Secret
+4. Go to **Client credentials** and note the Client ID and Client Secret
 
-**Step 2: Configure Shopify Store**
+**Step 2: Configure Shopify Store in NexWave**
 1. Create/edit Shopify Store document
 2. Set `Auth Method` = "OAuth"
 3. Enter the **Client ID** and **Client Secret** from Shopify
 4. Copy the **Callback URL** shown on the form to your Shopify app's redirect URIs
 5. Click **Actions → Connect to Shopify**
-6. Authorize on Shopify when redirected
+6. Authorise on Shopify when redirected
 7. Verify status shows "Connected"
+
+For detailed setup instructions with screenshots, see the [Shopify Connector Setup Guide](https://docs.nexwaveapp.com/doc/hpVraqmSVk).
 
 All required scopes are requested automatically during the OAuth flow:
 - `read_orders`, `write_orders` - Order sync
