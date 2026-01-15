@@ -87,7 +87,6 @@ class ShopifyStore(Document):
 		warehouse: DF.Link | None
 		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
 		webhooks: DF.Table[ShopifyStoreWebhook]
-
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()

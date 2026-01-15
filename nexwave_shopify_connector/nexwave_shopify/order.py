@@ -40,7 +40,9 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 		"Processing order: %s for Shopify Store: %s, request ID: %s", order.get("id"), store.name, request_id
 	)
 	# Check for duplicate
-	if frappe.db.get_value("Sales Order", filters={"shopify_order_id": cstr(order.get("id"))}):
+	if frappe.db.get_value(
+		"Sales Order", filters={"shopify_order_id": cstr(order.get("id")), "docstatus": ["!=", 2]}
+	):
 		logger.info("Order already exists, skipping: %s", order.get("id"))
 		return None
 
@@ -91,13 +93,19 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 		request_id: Log entry name for tracking
 		shopify_store: Shopify Store name
 	"""
-	frappe.set_user("Administrator")
+	logger = get_logger()
+	logger.info("Syncing sales order %s for Shopify store: %s", payload["id"], shopify_store)
 	frappe.flags.request_id = request_id
 
 	store = frappe.get_doc("Shopify Store", shopify_store)
 
 	# Check for duplicate first
-	if frappe.db.get_value("Sales Order", filters={"shopify_order_id": cstr(payload["id"])}):
+	if frappe.db.get_value(
+		"Sales Order", filters={"shopify_order_id": cstr(payload["id"]), "docstatus": ["!=", 2]}
+	):
+		logger.warning(
+			"Sales order %s already exists, not synced. Shopify store: %s", payload["id"], shopify_store
+		)
 		create_shopify_log(
 			status="Warning",
 			message="Sales order already exists, not synced",
@@ -145,11 +153,13 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 		request_id: Log entry name for tracking
 		shopify_store: Shopify Store name
 	"""
-	frappe.set_user("Administrator")
+	logger = get_logger()
+
 	frappe.flags.request_id = request_id
 
 	order = payload
 	store = frappe.get_doc("Shopify Store", shopify_store)
+	logger.info("Processing paid order %s for Shopify store: %s", order["id"], shopify_store)
 
 	try:
 		# Find existing Sales Order
@@ -178,6 +188,8 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 			if store.auto_create_payment_entry and si and si.grand_total > 0:
 				_create_payment_entry(si, store, getdate(order.get("created_at")))
+
+		logger.info("Processed paid order %s for Shopify store: %s", order["id"], shopify_store)
 
 		create_shopify_log(
 			status="Success",
@@ -1119,7 +1131,9 @@ def _create_sales_invoice(so, order: dict, store) -> "Document | None":
 	from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
 
 	# Check if invoice already exists
-	if frappe.db.get_value("Sales Invoice", {"shopify_order_id": cstr(order.get("id"))}):
+	if frappe.db.get_value(
+		"Sales Invoice", {"shopify_order_id": cstr(order.get("id")), "docstatus": ["!=", 2]}
+	):
 		return None
 
 	# SO must be submitted and not billed

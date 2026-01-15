@@ -461,8 +461,18 @@
   }
  ],
  "index_web_pages_for_search": 1,
- "links": [],
- "modified": "2026-01-15 20:04:50.862858",
+ "links": [
+  {
+   "link_doctype": "Sales Order",
+   "link_fieldname": "shopify_store"
+  },
+  {
+   "link_doctype": "Item",
+   "link_fieldname": "shopify_store",
+   "table_fieldname": "shopify_stores"
+  }
+ ],
+ "modified": "2026-01-15 23:06:55.323810",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
