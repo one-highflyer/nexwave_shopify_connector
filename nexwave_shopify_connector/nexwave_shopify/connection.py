@@ -195,10 +195,10 @@ def normalize_shop_domain(domain: str) -> str:
 
 def get_access_token(store: "Document") -> str:
 	"""
-	Get access token for the store based on auth_method.
+	Get access token for the store.
 
-	- Legacy: Returns token from store.access_token field
-	- OAuth: Returns token from Token Cache via Connected App
+	Both Legacy and OAuth methods now store the token in the same field.
+	OAuth tokens are stored by the oauth.callback() endpoint after successful authorization.
 
 	Args:
 		store: Shopify Store document
@@ -209,40 +209,20 @@ def get_access_token(store: "Document") -> str:
 	Raises:
 		frappe.ValidationError: If token cannot be retrieved
 	"""
-	auth_method = getattr(store, "auth_method", None) or "Legacy (Access Token)"
+	access_token = store.get_password("access_token")
 
-	if auth_method == "OAuth":
-		if not store.connected_app:
-			frappe.throw(_("Connected App is not configured for store {0}").format(store.name))
-
-		if not store.connected_user:
+	if not access_token:
+		auth_method = getattr(store, "auth_method", None) or "Legacy (Access Token)"
+		if auth_method == "OAuth":
 			frappe.throw(
 				_("OAuth not connected for store {0}. Please click 'Connect to Shopify' to authorize.").format(
 					store.name
 				)
 			)
-
-		connected_app = frappe.get_doc("Connected App", store.connected_app)
-		token_cache = connected_app.get_active_token(store.connected_user)
-
-		if not token_cache:
-			frappe.throw(
-				_("OAuth token not found or expired for store {0}. Please reconnect to Shopify.").format(store.name)
-			)
-
-		access_token = token_cache.get_password("access_token", raise_exception=False)
-		if not access_token:
-			frappe.throw(
-				_("OAuth access token is empty for store {0}. Please reconnect to Shopify.").format(store.name)
-			)
-
-		return access_token
-	else:
-		# Legacy method
-		access_token = store.get_password("access_token")
-		if not access_token:
+		else:
 			frappe.throw(_("Access Token is required for store {0}").format(store.name))
-		return access_token
+
+	return access_token
 
 
 def get_callback_url(store: Document | None = None) -> str:

@@ -3,15 +3,19 @@
 
 frappe.ui.form.on("Shopify Store", {
 	refresh(frm) {
-		// Show OAuth status indicator
+		// Set callback URL for OAuth (computed field)
 		if (frm.doc.auth_method === "OAuth") {
+			const callback_url = `${window.location.origin}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback`;
+			if (frm.doc.callback_url !== callback_url) {
+				frm.set_value("callback_url", callback_url);
+			}
 			frm.trigger("show_oauth_status");
 		}
 
 		// Add custom buttons
 		if (!frm.is_new()) {
 			// Show "Connect to Shopify" button for OAuth stores
-			if (frm.doc.auth_method === "OAuth" && frm.doc.connected_app) {
+			if (frm.doc.auth_method === "OAuth" && frm.doc.client_id) {
 				frm.add_custom_button(__("Connect to Shopify"), () => {
 					frm.trigger("initiate_oauth");
 				}, __("Actions"));
@@ -250,19 +254,22 @@ frappe.ui.form.on("Shopify Store", {
 	auth_method(frm) {
 		// Clear OAuth fields when switching to Legacy
 		if (frm.doc.auth_method === "Legacy (Access Token)") {
-			frm.set_value("connected_app", "");
+			frm.set_value("client_id", "");
+			frm.set_value("client_secret", "");
+			frm.set_value("callback_url", "");
 			frm.set_value("connected_user", "");
 			frm.set_value("oauth_status", "Not Connected");
-		}
-		// Clear access_token when switching to OAuth
-		if (frm.doc.auth_method === "OAuth") {
-			frm.set_value("access_token", "");
 		}
 	},
 
 	initiate_oauth(frm) {
-		if (!frm.doc.connected_app) {
-			frappe.msgprint(__("Please select a Connected App first."));
+		if (!frm.doc.client_id) {
+			frappe.msgprint(__("Please enter the Client ID first."));
+			return;
+		}
+
+		if (!frm.doc.client_secret) {
+			frappe.msgprint(__("Please enter the Client Secret first."));
 			return;
 		}
 
@@ -272,31 +279,23 @@ frappe.ui.form.on("Shopify Store", {
 			return;
 		}
 
-		// Build success_uri with store identifier
-		const success_uri = `/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback?shopify_store=${encodeURIComponent(frm.doc.name)}`;
-
-		// Load Connected App document and call the method on it
-		frappe.model.with_doc("Connected App", frm.doc.connected_app, () => {
-			const connected_app = frappe.get_doc("Connected App", frm.doc.connected_app);
-			frappe.call({
-				doc: connected_app,
-				method: "initiate_web_application_flow",
-				args: {
-					success_uri: success_uri,
-					user: frappe.session.user
-				},
-				freeze: true,
-				freeze_message: __("Redirecting to Shopify..."),
-				callback: (r) => {
-					if (r.message) {
-						// Redirect to Shopify authorization page
-						window.location.href = r.message;
-					}
-				},
-				error: (r) => {
-					frappe.msgprint(__("Failed to initiate OAuth flow. Please check the Connected App configuration."));
+		// Call our authorize endpoint
+		frappe.call({
+			method: "nexwave_shopify_connector.nexwave_shopify.oauth.authorize",
+			args: {
+				shopify_store: frm.doc.name
+			},
+			freeze: true,
+			freeze_message: __("Redirecting to Shopify..."),
+			callback: (r) => {
+				if (r.message) {
+					// Redirect to Shopify authorization page
+					window.location.href = r.message;
 				}
-			});
+			},
+			error: (r) => {
+				frappe.msgprint(__("Failed to initiate OAuth flow. Please check your Client ID and Client Secret."));
+			}
 		});
 	},
 
@@ -306,7 +305,7 @@ frappe.ui.form.on("Shopify Store", {
 				__("Connected to Shopify via OAuth as {0}", [frm.doc.connected_user]),
 				"green"
 			);
-		} else if (frm.doc.connected_app) {
+		} else if (frm.doc.client_id) {
 			frm.dashboard.set_headline_alert(
 				__("OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize."),
 				"yellow"

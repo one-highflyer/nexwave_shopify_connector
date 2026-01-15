@@ -286,68 +286,44 @@ OAuth flow for Shopify Dev Dashboard apps - required for apps created after Janu
 │                         OAuth 2.0 Flow                                      │
 │                                                                             │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
-│  │   NexWave   │    │   Shopify   │    │   Token     │    │   Token     │  │
-│  │   Store     │───►│   Auth      │───►│   Proxy     │───►│   Cache     │  │
-│  │   Form      │    │   Page      │    │   Endpoint  │    │   (Frappe)  │  │
+│  │   NexWave   │    │   Shopify   │    │   NexWave   │    │  Shopify    │  │
+│  │   Store     │───►│   Auth      │───►│   Callback  │───►│   Store     │  │
+│  │   Form      │    │   Page      │    │   Endpoint  │    │   (token)   │  │
 │  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
 │        │                                      │                             │
-│        │         "Connect to Shopify"         │   Adds token_type &        │
-│        └──────────────────────────────────────┘   expires_in fields        │
+│        │         "Connect to Shopify"         │   Token stored directly    │
+│        └──────────────────────────────────────┘   on Shopify Store doc     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Why a Proxy Endpoint?
-
-Shopify's OAuth token response doesn't include fields that Frappe's Token Cache requires:
-- `token_type` - Frappe requires "Bearer" or "MAC" (Shopify omits this)
-- `expires_in` - Frappe uses this to check token expiration (Shopify offline tokens don't include this)
-
-Our proxy endpoint (`oauth.exchange_token`) intercepts the token exchange, calls Shopify's token endpoint, and adds the missing fields before returning to Frappe.
+The OAuth flow is self-contained within the Shopify Store document - no separate Connected App configuration needed.
 
 #### OAuth Setup Steps
 
 **Step 1: Create Shopify App (Dev Dashboard)**
 1. Go to [Shopify Partners](https://partners.shopify.com) → Apps → Create app
-2. Under "Configuration", add your redirect URI:
+2. Under "Configuration", add your redirect URI (shown on the Shopify Store form as "Callback URL"):
    ```
-   https://{your-site}/api/method/frappe.integrations.doctype.connected_app.connected_app.callback/{connected-app-name}
+   https://{your-site}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback
    ```
-3. Configure required scopes (see table below)
-4. Note the Client ID and Client Secret
+3. Note the Client ID and Client Secret
 
-**Step 2: Create Connected App in NexWave**
-
-| Field | Value |
-|-------|-------|
-| Provider Name | Shopify - {store_name} |
-| Client ID | From Shopify Dev Dashboard |
-| Client Secret | From Shopify Dev Dashboard |
-| Authorization URI | `https://{shop}.myshopify.com/admin/oauth/authorize` |
-| **Token URI** | `https://{your-site}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.exchange_token` |
-| Scopes | Add each required scope as a row |
-
-> **Important**: The Token URI must point to our proxy endpoint, NOT Shopify's direct token URL.
-
-**Step 3: Configure Shopify Store**
+**Step 2: Configure Shopify Store**
 1. Create/edit Shopify Store document
 2. Set `Auth Method` = "OAuth"
-3. Select the Connected App created above
-4. Click **Actions → Connect to Shopify**
-5. Authorize on Shopify when redirected
-6. Verify status shows "Connected"
+3. Enter the **Client ID** and **Client Secret** from Shopify
+4. Copy the **Callback URL** shown on the form to your Shopify app's redirect URIs
+5. Click **Actions → Connect to Shopify**
+6. Authorize on Shopify when redirected
+7. Verify status shows "Connected"
 
-#### Required OAuth Scopes
-
-| Scope | Required For |
-|-------|--------------|
-| `read_orders` | Order sync (Shopify → NexWave) |
-| `read_customers` | Customer creation from orders |
-| `read_products` | Product mapping, SKU matching |
-| `write_products` | Product sync (NexWave → Shopify) |
-| `read_inventory` | Inventory sync |
-| `write_inventory` | Inventory sync |
-| `read_locations` | Warehouse/location mapping |
-| `read_fulfillments` | Delivery note sync |
+All required scopes are requested automatically during the OAuth flow:
+- `read_orders`, `write_orders` - Order sync
+- `read_customers`, `write_customers` - Customer handling
+- `read_products`, `write_products` - Product sync
+- `read_inventory`, `write_inventory` - Inventory sync
+- `read_locations` - Warehouse/location mapping
+- `read_fulfillments`, `write_fulfillments` - Delivery sync
 
 ## Configuration
 
@@ -366,7 +342,7 @@ Our proxy endpoint (`oauth.exchange_token`) intercepts the token exchange, calls
 nexwave_shopify_connector/
 ├── nexwave_shopify/
 │   ├── connection.py      # @shopify_session decorator, webhook endpoint
-│   ├── oauth.py           # OAuth token proxy & callback endpoints
+│   ├── oauth.py           # OAuth authorize & callback endpoints
 │   ├── order.py           # Order sync logic (webhooks & manual sync)
 │   ├── product.py         # Product/item sync to Shopify
 │   ├── utils.py           # Logging, eligibility helpers

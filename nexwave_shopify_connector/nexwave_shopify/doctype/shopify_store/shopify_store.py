@@ -9,6 +9,7 @@ from shopify.resources import CustomCollection, Location, Shop, SmartCollection
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION, get_access_token
+from nexwave_shopify_connector.utils.logger import get_logger
 
 
 class ShopifyStore(Document):
@@ -44,14 +45,16 @@ class ShopifyStore(Document):
 		api_version: DF.Data | None
 		auth_method: DF.Literal["Legacy (Access Token)", "OAuth"]
 		auto_create_collections: DF.Check
-		connected_app: DF.Link | None
-		connected_user: DF.Link | None
 		auto_create_invoice: DF.Check
 		auto_create_payment_entry: DF.Check
 		auto_submit_sales_order: DF.Check
+		callback_url: DF.Data | None
 		cash_bank_account: DF.Link | None
+		client_id: DF.Data | None
+		client_secret: DF.Password | None
 		collection_mapping: DF.Table[ShopifyStoreCollectionMapping]
 		company: DF.Link
+		connected_user: DF.Link | None
 		cost_center: DF.Link | None
 		customer_group: DF.Link | None
 		default_customer: DF.Link | None
@@ -83,6 +86,7 @@ class ShopifyStore(Document):
 		warehouse: DF.Link | None
 		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
 		webhooks: DF.Table[ShopifyStoreWebhook]
+
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
@@ -108,13 +112,15 @@ class ShopifyStore(Document):
 		auth_method = self.auth_method or "Legacy (Access Token)"
 
 		if auth_method == "OAuth":
-			# Clear legacy access_token when using OAuth
-			if self.access_token:
-				self.access_token = None
+			# Don't clear access_token in OAuth mode - it's set by the OAuth callback
+			# and stores the same token as legacy mode would
+			pass
 		else:
 			# Clear OAuth fields when using Legacy
-			if self.connected_app:
-				self.connected_app = None
+			if self.client_id:
+				self.client_id = None
+			if self.client_secret:
+				self.client_secret = None
 			if self.connected_user:
 				self.connected_user = None
 			if self.oauth_status and self.oauth_status != "Not Connected":
@@ -141,6 +147,7 @@ class ShopifyStore(Document):
 	@frappe.whitelist()
 	def test_connection(self):
 		"""Test the Shopify API connection."""
+		logger = get_logger()
 		try:
 			# Fetch available API versions from Shopify
 			self._init_shopify_api_versions()
@@ -165,8 +172,12 @@ class ShopifyStore(Document):
 					title=_("Shopify Connection Test"),
 					indicator="green",
 				)
+				logger.info("Connection successful! Shopify store: %s", self.shop_domain)
 
 		except Exception as e:
+			logger.error(
+				"Connection failed for Shopify store: %s, error: %s", self.shop_domain, str(e), exc_info=True
+			)
 			frappe.log_error(
 				message=frappe.get_traceback(),
 				title=_("Shopify Connection Test Failed - {0}").format(self.shop_domain),
@@ -177,6 +188,8 @@ class ShopifyStore(Document):
 	@frappe.whitelist()
 	def fetch_shopify_locations(self):
 		"""Fetch locations from Shopify and return them for the JS to populate the table."""
+		logger = get_logger()
+		logger.info("Fetching locations from Shopify for store: %s", self.shop_domain)
 		try:
 			# Fetch available API versions from Shopify
 			self._init_shopify_api_versions()
@@ -203,6 +216,13 @@ class ShopifyStore(Document):
 						}
 					)
 
+				logger.info(
+					"Successfully fetched %s locations from Shopify for store: %s, locations: %s",
+					len(locations_data),
+					self.shop_domain,
+					locations_data,
+				)
+
 				frappe.msgprint(
 					_("Successfully fetched {0} location(s) from Shopify.").format(len(locations_data))
 					+ "<br><br>"
@@ -214,6 +234,12 @@ class ShopifyStore(Document):
 				return locations_data
 
 		except Exception as e:
+			logger.error(
+				"Failed to fetch locations for Shopify store: %s, error: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
 			frappe.log_error(
 				message=frappe.get_traceback(),
 				title=_("Fetch Shopify Locations Failed - {0}").format(self.shop_domain),
@@ -265,6 +291,8 @@ class ShopifyStore(Document):
 		Returns collection data for JS to populate the collection_mapping table.
 		Preserves existing field_value mappings where possible.
 		"""
+		logger = get_logger()
+		logger.info("Fetching collections from Shopify for store: %s", self.shop_domain)
 		try:
 			self._init_shopify_api_versions()
 			auth_details = self._get_auth_details()
@@ -313,6 +341,12 @@ class ShopifyStore(Document):
 				return collections_data
 
 		except Exception as e:
+			logger.error(
+				"Failed to fetch collections for Shopify store: %s, error: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
 			frappe.log_error(
 				message=frappe.get_traceback(),
 				title=_("Fetch Shopify Collections Failed - {0}").format(self.shop_domain),
@@ -328,10 +362,15 @@ class ShopifyStore(Document):
 		Fetches orders created since the last sync (or last 30 days if first sync)
 		and creates Sales Orders in NexWave.
 		"""
+		logger = get_logger()
+		logger.info("Manual trigger to sync new orders from Shopify for store: %s", self.shop_domain)
 		if not self.enabled:
+			logger.warning("Shopify store: %s is not enabled", self.shop_domain)
 			frappe.throw(_("Store is not enabled"))
 
 		from nexwave_shopify_connector.nexwave_shopify.order import sync_new_orders
+
+		logger.info("Syncing new orders from Shopify for store: %s", self.shop_domain)
 
 		result = sync_new_orders(self.name)
 
@@ -342,6 +381,11 @@ class ShopifyStore(Document):
 
 		if result["errors"] > 0:
 			message += "<br><br>" + _("Check Error Log for details on failed orders.")
+			logger.warning(
+				"Order sync completed for store: %s, errors: %s", self.shop_domain, result["errors"]
+			)
+
+		logger.info("Order sync completed for store: %s, result: %s", self.shop_domain, result)
 
 		frappe.msgprint(
 			message,

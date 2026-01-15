@@ -1,187 +1,247 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
-import json
+"""
+Self-contained OAuth 2.0 implementation for Shopify.
+
+This module handles the complete OAuth flow without depending on Frappe's
+Connected App or Token Cache patterns. The access token is stored directly
+on the Shopify Store document.
+"""
+
+import secrets
+import typing
+from urllib.parse import urlencode
 
 import frappe
 import requests
 from frappe import _
-from werkzeug.wrappers import Response
 
+from nexwave_shopify_connector.nexwave_shopify.connection import normalize_shop_domain
 from nexwave_shopify_connector.utils.logger import get_logger
 
+if typing.TYPE_CHECKING:
+	from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store import ShopifyStore
 
-def _raw_response(data: dict, status: int = 200):
-    """
-    Return a raw JSON response bypassing Frappe's response wrapper.
+# All scopes needed for full connector functionality
+# Requested upfront so users can toggle features without reconnecting
+OAUTH_SCOPES = [
+	"read_orders",
+	"write_orders",
+	"read_customers",
+	"write_customers",
+	"read_products",
+	"write_products",
+	"read_inventory",
+	"write_inventory",
+	"read_locations",
+	"read_fulfillments",
+	"write_fulfillments",
+]
 
-    This is needed because requests_oauthlib expects standard OAuth2 token format,
-    not Frappe's {"message": ...} wrapper.
-    """
-    response = Response(
-        json.dumps(data),
-        status=status,
-        content_type="application/json"
-    )
-    frappe.local.response = response
-    return response
+
+def get_oauth_scopes() -> list[str]:
+	"""Return all scopes needed for the connector."""
+	return OAUTH_SCOPES
 
 
-@frappe.whitelist(allow_guest=True)
-def exchange_token():
-    """
-    Proxy endpoint for Shopify token exchange.
+def get_callback_url() -> str:
+	"""Get the OAuth callback URL for this site."""
+	site_url = frappe.utils.get_url()
+	return f"{site_url}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback"
 
-    Shopify's OAuth token response doesn't include 'token_type' field,
-    but Frappe's Token Cache requires it. This endpoint proxies the token
-    request to Shopify and adds the missing 'token_type: Bearer' to the response.
 
-    IMPORTANT: This endpoint returns RAW JSON (not Frappe-wrapped) because
-    requests_oauthlib expects standard OAuth2 token response format.
+def generate_state_token(shopify_store: str) -> str:
+	"""
+	Generate CSRF state token and store temporarily.
 
-    Configure Connected App to use this endpoint as the Token URI:
-    https://{site}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.exchange_token
-    """
-    logger = get_logger()
-    logger.info("Exchange token request received")
+	Args:
+	    shopify_store: Name of the Shopify Store document
 
-    # Get the request data from Frappe's OAuth2Session.fetch_token()
-    data = frappe.form_dict
+	Returns:
+	    State token string
+	"""
+	token = secrets.token_urlsafe(32)
 
-    # Get required OAuth parameters
-    code = data.get("code")
-    client_id = data.get("client_id")
-    client_secret = data.get("client_secret")
+	# Store in cache with 10-minute expiry
+	frappe.cache().set_value(f"shopify_oauth_state:{token}", shopify_store, expires_in_sec=600)
+	return token
 
-    if not all([code, client_id, client_secret]):
-        return _raw_response(
-            {"error": "invalid_request", "error_description": "Missing required parameters"},
-            status=400
-        )
 
-    # Find the Connected App by client_id
-    connected_app_name = frappe.db.get_value("Connected App", {"client_id": client_id}, "name")
+def validate_state_token(state: str) -> str | None:
+	"""
+	Validate state token and return associated store name.
 
-    if not connected_app_name:
-        return _raw_response(
-            {"error": "invalid_client", "error_description": "Connected App not found"},
-            status=400
-        )
+	Args:
+	    state: State token from OAuth callback
 
-    # Find the Shopify Store that uses this Connected App
-    store_name = frappe.db.get_value("Shopify Store", {"connected_app": connected_app_name}, "name")
-
-    if not store_name:
-        return _raw_response(
-            {"error": "invalid_client", "error_description": "Shopify Store not found"},
-            status=400
-        )
-
-    store = frappe.get_doc("Shopify Store", store_name)
-    shop_domain = store.shop_domain
-
-    if not shop_domain:
-        return _raw_response(
-            {"error": "invalid_client", "error_description": "Shop domain not configured"},
-            status=400
-        )
-
-    # Build the actual Shopify token URL
-    shopify_token_url = f"https://{shop_domain}/admin/oauth/access_token"
-    logger.info("Making token exchange request to Shopify for %s", shop_domain)
-
-    # Make the token exchange request to Shopify
-    try:
-        response = requests.post(
-            shopify_token_url,
-            data={"client_id": client_id, "client_secret": client_secret, "code": code},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=30,
-        )
-    except requests.RequestException as e:
-        logger.error("Failed to connect to Shopify: %s", str(e), exc_info=True)
-        return _raw_response(
-            {"error": "server_error", "error_description": f"Failed to connect to Shopify: {e}"},
-            status=500
-        )
-
-    if response.status_code != 200:
-        logger.error("Shopify token exchange failed: %s", response.text)
-        # Pass through Shopify's error response
-        frappe.local.response = Response(
-            response.text,
-            status=response.status_code,
-            content_type="application/json"
-        )
-        return frappe.local.response
-
-    token_data = response.json()
-    logger.info("Shopify token exchange successful")
-
-    # Add the missing token_type that Frappe's Token Cache requires
-    token_data["token_type"] = "Bearer"
-
-    # Add expires_in if not present (Shopify offline tokens don't expire)
-    # Frappe's Token Cache uses expires_in to determine if token is expired.
-    # Without this, is_expired() returns True immediately, causing get_active_token() to fail.
-    # Set to 1 year (in seconds) for effectively non-expiring offline tokens.
-    if "expires_in" not in token_data:
-        token_data["expires_in"] = 31536000  # 1 year in seconds
-
-    # Return RAW JSON response (not wrapped in Frappe's {"message": ...})
-    return _raw_response(token_data, status=200)
+	Returns:
+	    Store name if valid, None otherwise
+	"""
+	store_name = frappe.cache().get_value(f"shopify_oauth_state:{state}")
+	if store_name:
+		# Clear the token (single-use)
+		frappe.cache().delete_value(f"shopify_oauth_state:{state}")
+	return store_name
 
 
 @frappe.whitelist()
-def callback(shopify_store: str = None):
-    """
-    OAuth success callback - called after Frappe's Connected App
-    completes the OAuth flow and stores token in Token Cache.
+def authorize(shopify_store: str):
+	"""
+	Build Shopify OAuth authorization URL and return it.
 
-    This endpoint is called via the success_uri parameter passed to
-    Connected App's initiate_web_application_flow().
+	Called when user clicks "Connect to Shopify" button.
 
-    It verifies the token exists and updates the Shopify Store status.
+	Args:
+	    shopify_store: Name of the Shopify Store document
 
-    Args:
-        shopify_store: Name of the Shopify Store document
-    """
-    if not shopify_store:
-        frappe.throw(_("Missing shopify_store parameter"))
+	Returns:
+	    Authorization URL to redirect user to
+	"""
+	logger = get_logger()
 
-    if not frappe.db.exists("Shopify Store", shopify_store):
-        frappe.throw(_("Shopify Store not found: {0}").format(shopify_store))
+	if not shopify_store:
+		frappe.throw(_("Missing shopify_store parameter"))
 
-    store = frappe.get_doc("Shopify Store", shopify_store)
+	if not frappe.db.exists("Shopify Store", shopify_store):
+		frappe.throw(_("Shopify Store not found: {0}").format(shopify_store))
 
-    # Verify the current user has permission to modify this store
-    if not store.has_permission("write"):
-        frappe.throw(_("You do not have permission to connect this Shopify Store"), frappe.PermissionError)
+	store: ShopifyStore = frappe.get_doc("Shopify Store", shopify_store)
 
-    if store.auth_method != "OAuth":
-        frappe.throw(_("Store is not configured for OAuth authentication"))
+	# Verify permission
+	if not store.has_permission("write"):
+		frappe.throw(_("You do not have permission to connect this Shopify Store"), frappe.PermissionError)
 
-    if not store.connected_app:
-        frappe.throw(_("Store does not have a Connected App configured"))
+	if store.auth_method != "OAuth":
+		frappe.throw(_("Store is not configured for OAuth authentication"))
 
-    # Verify token exists in Token Cache
-    connected_app = frappe.get_doc("Connected App", store.connected_app)
-    token_cache = connected_app.get_token_cache(frappe.session.user)
+	if not store.client_id:
+		frappe.throw(_("Client ID is required for OAuth"))
 
-    if not token_cache:
-        frappe.throw(_("OAuth authorization failed - no token received. Please try again."))
+	if not store.shop_domain:
+		frappe.throw(_("Shop domain is required"))
 
-    access_token = token_cache.get_password("access_token", raise_exception=False)
-    if not access_token:
-        frappe.throw(_("OAuth authorization failed - no access token in token cache. Please try again."))
+	# Build callback URL
+	callback_url = get_callback_url()
 
-    # Update store with connected user and status
-    store.db_set("connected_user", frappe.session.user)
-    store.db_set("oauth_status", "Connected")
-    frappe.db.commit()
+	# Get all scopes (requested upfront for full functionality)
+	scopes = get_oauth_scopes()
 
-    frappe.msgprint(_("Successfully connected to Shopify!"), indicator="green", alert=True)
+	# Generate state token for CSRF protection
+	state = generate_state_token(shopify_store)
 
-    # Redirect to the Shopify Store form
-    frappe.local.response["type"] = "redirect"
-    frappe.local.response["location"] = f"/app/shopify-store/{store.name}"
+	# Build authorization URL
+	params = {
+		"client_id": store.client_id,
+		"scope": ",".join(scopes),
+		"redirect_uri": callback_url,
+		"state": state,
+	}
+
+	auth_url = f"https://{store.shop_domain}/admin/oauth/authorize?" + urlencode(params)
+
+	logger.info("OAuth authorization initiated for store %s", shopify_store)
+
+	return auth_url
+
+
+@frappe.whitelist(allow_guest=True)
+def callback():
+	"""
+	OAuth callback - exchanges authorization code for access token.
+
+	Shopify redirects here after user approves permissions.
+	This endpoint handles the token exchange directly without using
+	Connected App or Token Cache.
+	"""
+	logger = get_logger()
+	logger.info("OAuth callback received")
+
+	# Get parameters from Shopify's redirect
+	code = frappe.form_dict.get("code")
+	state = frappe.form_dict.get("state")
+	shop = frappe.form_dict.get("shop")  # Shopify includes this
+
+	# Check for error response from Shopify
+	error = frappe.form_dict.get("error")
+	if error:
+		error_description = frappe.form_dict.get("error_description", "Unknown error")
+		logger.error("OAuth error from Shopify: %s - %s", error, error_description)
+		frappe.throw(_("Shopify OAuth error: {0}").format(error_description))
+
+	if not code:
+		logger.error("Missing authorization code in callback")
+		frappe.throw(_("Missing authorization code"))
+
+	if not state:
+		logger.error("Missing state parameter in callback")
+		frappe.throw(_("Missing state parameter"))
+
+	if not shop:
+		logger.error("Missing shop parameter in callback")
+		frappe.throw(_("Missing shop parameter"))
+
+	# Validate state token and get store name
+	shopify_store = validate_state_token(state)
+	if not shopify_store:
+		logger.error("Invalid or expired state token in callback")
+		frappe.throw(_("Invalid or expired state token. Please try connecting again."))
+
+	logger.info("Received callback for store %s", shopify_store)
+
+	store: ShopifyStore = frappe.get_doc("Shopify Store", shopify_store)
+
+	# Verify shop domain matches (security check)
+	normalized_shop = normalize_shop_domain(shop)
+	if normalized_shop != store.shop_domain:
+		logger.error("Shop domain mismatch: expected %s, got %s", store.shop_domain, normalized_shop)
+		frappe.throw(_("Shop domain mismatch. Please ensure you're authorizing the correct store."))
+
+	# Exchange authorization code for access token
+	token_url = f"https://{store.shop_domain}/admin/oauth/access_token"
+
+	logger.info("Exchanging authorization code for access token. Shopify store: %s", store.shop_domain)
+
+	try:
+		response = requests.post(
+			token_url,
+			data={
+				"client_id": store.client_id,
+				"client_secret": store.get_password("client_secret"),
+				"code": code,
+			},
+			headers={"Content-Type": "application/x-www-form-urlencoded"},
+			timeout=30,
+		)
+	except requests.RequestException as e:
+		logger.error("Failed to connect to Shopify: %s", str(e), exc_info=True)
+		frappe.throw(_("Failed to connect to Shopify: {0}").format(str(e)))
+
+	if response.status_code != 200:
+		logger.error("Token exchange failed: %s", response.text)
+		frappe.throw(_("Token exchange failed: {0}").format(response.text))
+
+	token_data = response.json()
+	access_token = token_data.get("access_token")
+
+	if not access_token:
+		logger.error("No access token in response: %s", token_data)
+		frappe.throw(_("No access token received from Shopify"))
+
+	logger.info("OAuth token exchange successful for store %s", shopify_store)
+
+	# Store the token directly on the Shopify Store document
+	# Using db_set to avoid triggering validation (which might clear OAuth fields)
+	store.db_set("access_token", access_token)
+	store.db_set("connected_user", frappe.session.user)
+	store.db_set("oauth_status", "Connected")
+	frappe.db.commit()
+
+	frappe.msgprint(_("Successfully connected to Shopify!"), indicator="green", alert=True)
+	logger.info(
+		"Successfully connected to Shopify! Redirecting to store form. Shopify store: %s", store.shop_domain
+	)
+
+	# Redirect to the Shopify Store form
+	frappe.local.response["type"] = "redirect"
+	frappe.local.response["location"] = f"/app/shopify-store/{store.name}"

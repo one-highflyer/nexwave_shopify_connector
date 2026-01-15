@@ -1,7 +1,7 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import frappe
 from frappe import _
@@ -12,7 +12,10 @@ from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
+from nexwave_shopify_connector.utils.logger import get_logger
 
+if TYPE_CHECKING:
+	from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store import ShopifyStore
 
 def update_inventory_on_shopify():
 	"""
@@ -337,15 +340,20 @@ def manual_inventory_sync(store_name: str):
 	Args:
 		store_name: Shopify Store name
 	"""
-	store = frappe.get_doc("Shopify Store", store_name)
+	logger = get_logger()
+	logger.info("Manual inventory sync for Shopify store: %s", store_name)
+	store: ShopifyStore = frappe.get_doc("Shopify Store", store_name)
 
 	if not store.enabled:
+		logger.error("Shopify store: %s is not enabled", store_name)
 		frappe.throw(_("Store is not enabled"))
 
 	if not store.enable_inventory_sync:
+		logger.error("Inventory sync is not enabled for Shopify store: %s", store_name)
 		frappe.throw(_("Inventory sync is not enabled for this store"))
 
 	if not store.warehouse_mapping:
+		logger.error("No warehouse mappings configured for Shopify store: %s", store_name)
 		frappe.throw(_("No warehouse mappings configured"))
 
 	# Enqueue sync job
@@ -357,3 +365,4 @@ def manual_inventory_sync(store_name: str):
 	)
 
 	frappe.msgprint(_("Inventory sync has been queued for {0}").format(store_name), indicator="green")
+	logger.info("Successfully queued inventory sync for Shopify store: %s", store_name)
