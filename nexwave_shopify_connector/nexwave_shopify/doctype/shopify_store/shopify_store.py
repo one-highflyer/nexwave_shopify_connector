@@ -9,6 +9,7 @@ from shopify.resources import CustomCollection, Location, Shop, SmartCollection
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION, get_access_token
+from nexwave_shopify_connector.nexwave_shopify.oauth import get_callback_url
 from nexwave_shopify_connector.utils.logger import get_logger
 
 
@@ -112,15 +113,16 @@ class ShopifyStore(Document):
 		auth_method = self.auth_method or "Legacy (Access Token)"
 
 		if auth_method == "OAuth":
-			# Don't clear access_token in OAuth mode - it's set by the OAuth callback
-			# and stores the same token as legacy mode would
-			pass
+			# Set callback URL for OAuth (computed from site URL)
+			self.callback_url = get_callback_url()
 		else:
 			# Clear OAuth fields when using Legacy
 			if self.client_id:
 				self.client_id = None
 			if self.client_secret:
 				self.client_secret = None
+			if self.callback_url:
+				self.callback_url = None
 			if self.connected_user:
 				self.connected_user = None
 			if self.oauth_status and self.oauth_status != "Not Connected":

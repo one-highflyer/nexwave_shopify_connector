@@ -45,6 +45,7 @@ def get_oauth_scopes() -> list[str]:
 	return OAUTH_SCOPES
 
 
+@frappe.whitelist()
 def get_callback_url() -> str:
 	"""Get the OAuth callback URL for this site."""
 	site_url = frappe.utils.get_url()
@@ -145,7 +146,7 @@ def authorize(shopify_store: str):
 	return auth_url
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def callback():
 	"""
 	OAuth callback - exchanges authorization code for access token.

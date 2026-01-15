@@ -3,12 +3,8 @@
 
 frappe.ui.form.on("Shopify Store", {
 	refresh(frm) {
-		// Set callback URL for OAuth (computed field)
+		// Show OAuth status (callback_url is set by backend on save)
 		if (frm.doc.auth_method === "OAuth") {
-			const callback_url = `${window.location.origin}/api/method/nexwave_shopify_connector.nexwave_shopify.oauth.callback`;
-			if (frm.doc.callback_url !== callback_url) {
-				frm.set_value("callback_url", callback_url);
-			}
 			frm.trigger("show_oauth_status");
 		}
 

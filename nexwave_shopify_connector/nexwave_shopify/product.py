@@ -188,7 +188,6 @@ def sync_item_to_store(item_code: str, store_name: str, force: bool = False):
 	# Get auth details
 	api_version = store.api_version or DEFAULT_API_VERSION
 	access_token = store.get_password("access_token")
-	logger.info("Access token: %s", access_token)
 
 	if not access_token:
 		logger.error("Access token not configured for store %s", store_name)
