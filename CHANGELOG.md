@@ -1,3 +1,12 @@
+## [1.0.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.0.0...v1.0.1) (2026-01-15)
+
+
+### Bug Fixes
+
+* add permission check before updating store OAuth status ([f8bc3c7](https://github.com/one-highflyer/nexwave_shopify_connector/commit/f8bc3c70db4190420e86f3f2f6c074dc4b4cee7e))
+* address PR review comments for OAuth implementation ([3e01ea2](https://github.com/one-highflyer/nexwave_shopify_connector/commit/3e01ea2e4a636f2e87c0e0a614fbbc955063b58a))
+* OAuth token exchange compatibility with Frappe Token Cache ([8f7a071](https://github.com/one-highflyer/nexwave_shopify_connector/commit/8f7a071f1e656902786270360d4d2c99c211d1dc))
+
 # 1.0.0 (2026-01-12)
 
 
