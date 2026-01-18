@@ -470,9 +470,13 @@
    "link_doctype": "Item",
    "link_fieldname": "shopify_store",
    "table_fieldname": "shopify_stores"
+  },
+  {
+   "link_doctype": "NexWave Shopify Log",
+   "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-15 23:06:55.323810",
+ "modified": "2026-01-18 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

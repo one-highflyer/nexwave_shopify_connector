@@ -300,25 +300,43 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 		Dict with counts: {"synced": n, "skipped": n, "errors": n}
 	"""
 	logger = get_logger()
-	logger.info(
-		"Syncing new orders for Shopify Store: %s, from: %s, to: %s", shopify_store, from_date, to_date
-	)
 	frappe.set_user("Administrator")
 	store = frappe.get_doc("Shopify Store", shopify_store)
 
 	# Determine sync window
+	used_default_from_date = False
 	if not from_date:
-		from_date = store.last_order_sync or add_days(nowdate(), -30)
+		if store.last_order_sync:
+			from_date = store.last_order_sync
+		else:
+			from_date = add_days(nowdate(), -30)
+			used_default_from_date = True
 
 	if not to_date:
 		to_date = now()
+
+	logger.info(
+		"Syncing new orders for Shopify Store: %s, from: %s, to: %s (used_default_from_date: %s)",
+		shopify_store,
+		from_date,
+		to_date,
+		used_default_from_date,
+	)
 
 	# Convert to ISO format for Shopify API using site's timezone
 	site_timezone = pytz.timezone(get_system_timezone())
 	from_time_iso = site_timezone.localize(get_datetime(from_date)).isoformat()
 	to_time_iso = site_timezone.localize(get_datetime(to_date)).isoformat()
 
+	logger.info(
+		"Shopify API query params - created_at_min: %s, created_at_max: %s",
+		from_time_iso,
+		to_time_iso,
+	)
+
 	synced, skipped, errors = 0, 0, 0
+	total_orders_fetched = 0
+	batch_count = 0
 
 	api_version = store.api_version or DEFAULT_API_VERSION
 	auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
@@ -329,6 +347,15 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 		)
 
 		for orders in orders_iter:
+			batch_count += 1
+			batch_size = len(orders)
+			total_orders_fetched += batch_size
+			logger.info(
+				"Fetched batch %d with %d orders for Shopify Store: %s",
+				batch_count,
+				batch_size,
+				shopify_store,
+			)
 			for order in orders:
 				order_data = order.to_dict()
 				try:
@@ -380,6 +407,22 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 						str(e),
 						exc_info=True,
 					)
+
+	# Log summary
+	if total_orders_fetched == 0:
+		logger.info(
+			"No orders found in Shopify for store: %s in date range %s to %s",
+			shopify_store,
+			from_time_iso,
+			to_time_iso,
+		)
+	else:
+		logger.info(
+			"Fetched %d orders in %d batches from Shopify for store: %s",
+			total_orders_fetched,
+			batch_count,
+			shopify_store,
+		)
 
 	# Only update last sync timestamp if no errors occurred
 	if errors == 0:
