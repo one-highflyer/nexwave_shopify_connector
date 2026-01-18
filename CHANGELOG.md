@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.0.1...v1.1.0) (2026-01-18)
+
+
+### Features
+
+* **order-sync:** improve logging for easier debugging ([29d1256](https://github.com/one-highflyer/nexwave_shopify_connector/commit/29d12565f1ab733cc9821685b922241dc139250d))
+
 ## [1.0.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.0.0...v1.0.1) (2026-01-15)
 
 
