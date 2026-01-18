@@ -1,3 +1,15 @@
+# [1.2.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.1.0...v1.2.0) (2026-01-18)
+
+
+### Bug Fixes
+
+* **order-sync:** skip cancelled Shopify orders during sync ([b38af5d](https://github.com/one-highflyer/nexwave_shopify_connector/commit/b38af5d937768232b0228b4d38830720e66c5da3))
+
+
+### Features
+
+* **order-sync:** add toggle to sync all order statuses ([2298837](https://github.com/one-highflyer/nexwave_shopify_connector/commit/2298837a00a8c4bc8a2fec09f8139bbbebbc9153))
+
 # [1.1.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.0.1...v1.1.0) (2026-01-18)
 
 
