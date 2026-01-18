@@ -342,9 +342,17 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 	auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
 
 	with Session.temp(*auth_details):
-		orders_iter = PaginatedIterator(
-			Order.find(created_at_min=from_time_iso, created_at_max=to_time_iso, limit=250)
-		)
+		# Build query params
+		query_params = {
+			"created_at_min": from_time_iso,
+			"created_at_max": to_time_iso,
+			"limit": 250,
+		}
+		if store.sync_all_order_statuses:
+			query_params["status"] = "any"
+			logger.info("Fetching all order statuses (including fulfilled/closed) for store: %s", shopify_store)
+
+		orders_iter = PaginatedIterator(Order.find(**query_params))
 
 		for orders in orders_iter:
 			batch_count += 1

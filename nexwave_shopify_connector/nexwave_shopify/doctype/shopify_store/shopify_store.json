@@ -30,6 +30,7 @@
   "item_group",
   "section_break_orders",
   "sync_orders",
+  "sync_all_order_statuses",
   "sales_order_series",
   "delivery_note_series",
   "sales_invoice_series",
@@ -224,6 +225,14 @@
    "fieldname": "sync_orders",
    "fieldtype": "Check",
    "label": "Sync Orders"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.sync_orders",
+   "description": "Sync all orders including fulfilled and closed. By default, only open orders are synced. Warning: Enabling this on first sync may import a large number of historical orders.",
+   "fieldname": "sync_all_order_statuses",
+   "fieldtype": "Check",
+   "label": "Sync All Order Statuses"
   },
   {
    "fieldname": "sales_order_series",
@@ -476,7 +485,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-18 22:00:00.000000",
+ "modified": "2026-01-18 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
