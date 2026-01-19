@@ -1342,17 +1342,29 @@ def _get_payment_amounts_by_gateway(order: dict) -> dict:
 			gateway_amounts[gateway] = amount
 
 	# If no transactions found, fall back to payment_gateway_names with total amount
+	# But only if there's a single gateway - for split payments we can't determine amounts
 	if not gateway_amounts:
 		logger = get_logger()
 		payment_gateways = order.get("payment_gateway_names") or []
 		if payment_gateways and order.get("financial_status") == "paid":
+			if len(payment_gateways) > 1:
+				# Multiple gateways without transaction data - can't determine split amounts
+				logger.warning(
+					"Order %s has multiple payment gateways %s but no transaction data. "
+					"Cannot determine payment split - skipping automatic payment entry creation.",
+					order.get("id"),
+					payment_gateways,
+				)
+				# Return empty to skip payment entry creation
+				return gateway_amounts
+
 			logger.warning(
 				"No transaction data found for paid order %s, using fallback: gateway=%s, amount=%s",
 				order.get("id"),
 				payment_gateways[0],
 				flt(order.get("total_price")),
 			)
-			# Use the first gateway with the full order amount as fallback
+			# Single gateway - safe to use full amount
 			gateway_amounts[payment_gateways[0]] = flt(order.get("total_price"))
 
 	return gateway_amounts
