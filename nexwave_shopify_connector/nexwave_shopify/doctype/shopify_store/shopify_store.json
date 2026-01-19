@@ -43,9 +43,10 @@
   "auto_create_invoice",
   "auto_create_payment_entry",
   "column_break_order_automation",
-  "cash_bank_account",
   "add_shipping_as_item",
   "shipping_item",
+  "section_break_payment_methods",
+  "payment_method_mapping",
   "section_break_inventory",
   "enable_inventory_sync",
   "warehouse",
@@ -304,15 +305,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "depends_on": "eval:doc.auto_create_payment_entry",
-   "description": "Bank/Cash account for Payment Entries",
-   "fieldname": "cash_bank_account",
-   "fieldtype": "Link",
-   "label": "Cash/Bank Account",
-   "mandatory_depends_on": "eval:doc.auto_create_payment_entry",
-   "options": "Account"
-  },
-  {
    "default": "0",
    "depends_on": "eval:doc.sync_orders",
    "description": "Add shipping charges as a line item instead of as tax",
@@ -328,6 +320,20 @@
    "label": "Shipping Item",
    "mandatory_depends_on": "eval:doc.add_shipping_as_item",
    "options": "Item"
+  },
+  {
+   "depends_on": "eval:doc.auto_create_payment_entry",
+   "fieldname": "section_break_payment_methods",
+   "fieldtype": "Section Break",
+   "label": "Payment Method Mapping"
+  },
+  {
+   "depends_on": "eval:doc.auto_create_payment_entry",
+   "description": "Map Shopify payment gateways to NexWave Mode of Payment. Payment entries will fail if a gateway is not mapped.",
+   "fieldname": "payment_method_mapping",
+   "fieldtype": "Table",
+   "label": "Payment Method Mapping",
+   "options": "Shopify Store Payment Method Mapping"
   },
   {
    "fieldname": "section_break_inventory",
@@ -485,7 +491,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-18 23:00:00.000000",
+ "modified": "2026-01-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

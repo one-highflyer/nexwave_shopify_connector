@@ -75,7 +75,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 			logger.info("Sales Invoice created: %s for Shopify Order ID: %s", si.name, order.get("id"))
 
 			if store.auto_create_payment_entry and si and si.grand_total > 0:
-				_create_payment_entry(si, store, getdate(order.get("created_at")))
+				_create_payment_entries(si, order, store, getdate(order.get("created_at")))
 				logger.info("Payment Entry created for Shopify Order ID: %s", order.get("id"))
 
 	logger.info("Sales Order created: %s for Shopify Order ID: %s", so.name, order.get("id"))
@@ -193,7 +193,7 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 			si = _create_sales_invoice(so, order, store)
 
 			if store.auto_create_payment_entry and si and si.grand_total > 0:
-				_create_payment_entry(si, store, getdate(order.get("created_at")))
+				_create_payment_entries(si, order, store, getdate(order.get("created_at")))
 
 		logger.info("Processed paid order %s for Shopify store: %s", order["id"], shopify_store)
 
@@ -356,7 +356,9 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 		}
 		if store.sync_all_order_statuses:
 			query_params["status"] = "any"
-			logger.info("Fetching all order statuses (including fulfilled/closed) for store: %s", shopify_store)
+			logger.info(
+				"Fetching all order statuses (including fulfilled/closed) for store: %s", shopify_store
+			)
 
 		orders_iter = PaginatedIterator(Order.find(**query_params))
 
@@ -1219,30 +1221,207 @@ def _create_sales_invoice(so, order: dict, store) -> "Document | None":
 	return si
 
 
-def _create_payment_entry(si, store, posting_date=None):
+def _create_payment_entries(si, order: dict, store, posting_date=None):
 	"""
-	Create Payment Entry against Sales Invoice.
+	Create Payment Entries against Sales Invoice using payment method mapping.
+
+	Parses the order's transactions to determine payment amounts per gateway,
+	then creates a Payment Entry for each gateway using the configured mapping.
 
 	Args:
 		si: Sales Invoice document
+		order: Shopify order data containing transactions
 		store: Shopify Store document
-		posting_date: Date for the payment entry
-	"""
-	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+		posting_date: Date for the payment entries
 
-	if not store.cash_bank_account:
-		frappe.log_error(
-			title="Shopify Payment Entry Error",
-			message=f"Cash/Bank account not configured for store {store.name}",
+	Raises:
+		ValueError: If no payment method mapping exists for a gateway
+	"""
+	logger = get_logger()
+	posting_date = posting_date or nowdate()
+
+	# Get payment amounts per gateway from transactions
+	gateway_amounts = _get_payment_amounts_by_gateway(order)
+
+	if not gateway_amounts:
+		logger.warning(
+			"No successful payment transactions found in order %s, skipping payment entry creation",
+			order.get("id"),
 		)
 		return
 
-	posting_date = posting_date or nowdate()
+	logger.info(
+		"Creating payment entries for order %s: gateways=%s",
+		order.get("id"),
+		list(gateway_amounts.keys()),
+	)
 
-	pe = get_payment_entry(si.doctype, si.name, bank_account=store.cash_bank_account)
+	# Build mapping lookup dict
+	payment_mapping = {m.shopify_gateway: m for m in store.payment_method_mapping or []}
+
+	# Validate that payment mappings are configured
+	if not payment_mapping:
+		frappe.throw(
+			_(
+				"No payment method mappings configured for Shopify Store '{0}'. "
+				"Please configure payment method mappings before enabling auto-create payment entry."
+			).format(store.name)
+		)
+
+	# Create a Payment Entry for each gateway
+	remaining_amount = flt(si.grand_total)
+
+	for gateway, amount in gateway_amounts.items():
+		# Look up mapping
+		mapping = payment_mapping.get(gateway)
+		if not mapping:
+			frappe.throw(
+				_(
+					"Payment method mapping not configured for Shopify gateway '{0}'. "
+					"Please add a mapping in Shopify Store settings."
+				).format(gateway)
+			)
+
+		# Determine the amount for this payment entry
+		# For the last gateway, use remaining amount to handle rounding
+		if len(gateway_amounts) > 1 and gateway == list(gateway_amounts.keys())[-1]:
+			payment_amount = remaining_amount
+		else:
+			payment_amount = min(flt(amount), remaining_amount)
+
+		if payment_amount <= 0:
+			logger.warning("Skipping payment entry for gateway %s with zero/negative amount", gateway)
+			continue
+
+		_create_single_payment_entry(
+			si=si,
+			amount=payment_amount,
+			mode_of_payment=mapping.mode_of_payment,
+			account=mapping.account,
+			posting_date=posting_date,
+			gateway=gateway,
+		)
+
+		remaining_amount -= payment_amount
+		logger.info(
+			"Created payment entry for gateway %s: amount=%s, mode=%s",
+			gateway,
+			payment_amount,
+			mapping.mode_of_payment,
+		)
+
+
+def _get_payment_amounts_by_gateway(order: dict) -> dict:
+	"""
+	Parse Shopify order transactions to get payment amounts grouped by gateway.
+
+	Only includes successful sale/capture transactions, excludes refunds/voids.
+
+	Args:
+		order: Shopify order data
+
+	Returns:
+		Dict mapping gateway name to total amount
+	"""
+	gateway_amounts = {}
+	transactions = order.get("transactions") or []
+
+	for txn in transactions:
+		# Only count successful sale or capture transactions
+		if txn.get("status") != "success":
+			continue
+		if txn.get("kind") not in ("sale", "capture"):
+			continue
+
+		gateway = txn.get("gateway") or "unknown"
+		amount = flt(txn.get("amount"))
+
+		if gateway in gateway_amounts:
+			gateway_amounts[gateway] += amount
+		else:
+			gateway_amounts[gateway] = amount
+
+	# If no transactions found, fall back to payment_gateway_names with total amount
+	# But only if there's a single gateway - for split payments we can't determine amounts
+	if not gateway_amounts:
+		logger = get_logger()
+		payment_gateways = order.get("payment_gateway_names") or []
+		if payment_gateways and order.get("financial_status") == "paid":
+			if len(payment_gateways) > 1:
+				# Multiple gateways without transaction data - can't determine split amounts
+				logger.warning(
+					"Order %s has multiple payment gateways %s but no transaction data. "
+					"Cannot determine payment split - skipping automatic payment entry creation.",
+					order.get("id"),
+					payment_gateways,
+				)
+				# Return empty to skip payment entry creation
+				return gateway_amounts
+
+			logger.warning(
+				"No transaction data found for paid order %s, using fallback: gateway=%s, amount=%s",
+				order.get("id"),
+				payment_gateways[0],
+				flt(order.get("total_price")),
+			)
+			# Single gateway - safe to use full amount
+			gateway_amounts[payment_gateways[0]] = flt(order.get("total_price"))
+
+	return gateway_amounts
+
+
+def _create_single_payment_entry(
+	si,
+	amount: float,
+	mode_of_payment: str,
+	account: str | None,
+	posting_date,
+	gateway: str,
+):
+	"""
+	Create a single Payment Entry for a specific amount and mode of payment.
+
+	Args:
+		si: Sales Invoice document
+		amount: Payment amount
+		mode_of_payment: Mode of Payment to use
+		account: Optional account override
+		posting_date: Date for the payment entry
+		gateway: Shopify gateway name (for reference)
+	"""
+	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+
+	# Get the default account for this mode of payment if not specified
+	if not account:
+		account = frappe.db.get_value(
+			"Mode of Payment Account",
+			{"parent": mode_of_payment, "company": si.company},
+			"default_account",
+		)
+
+	if not account:
+		frappe.throw(
+			_(
+				"No account configured for Mode of Payment '{0}' in company '{1}'. "
+				"Please configure the account in Mode of Payment or Shopify Store settings."
+			).format(mode_of_payment, si.company)
+		)
+
+	pe = get_payment_entry(si.doctype, si.name, bank_account=account)
+
+	# Set the payment amount (may be less than invoice total for split payments)
+	pe.paid_amount = amount
+	pe.received_amount = amount
+
+	# Adjust the reference amount
+	if pe.references:
+		pe.references[0].allocated_amount = amount
+
+	pe.mode_of_payment = mode_of_payment
 	pe.reference_no = si.name
 	pe.posting_date = posting_date
 	pe.reference_date = posting_date
+	pe.remarks = f"Payment via Shopify gateway: {gateway}"
 	pe.flags.ignore_mandatory = True
 	pe.insert(ignore_permissions=True)
 	pe.submit()
