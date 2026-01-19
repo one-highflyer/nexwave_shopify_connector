@@ -144,30 +144,8 @@ frappe.ui.form.on("Shopify Store", {
 			}
 		}
 
-		// Populate series options
-		frm.set_query("sales_order_series", function () {
-			return {
-				filters: {
-					document_type: "Sales Order"
-				}
-			};
-		});
-
-		frm.set_query("delivery_note_series", function () {
-			return {
-				filters: {
-					document_type: "Delivery Note"
-				}
-			};
-		});
-
-		frm.set_query("sales_invoice_series", function () {
-			return {
-				filters: {
-					document_type: "Sales Invoice"
-				}
-			};
-		});
+		// Populate naming series options for Select fields
+		frm.trigger("set_naming_series_options");
 
 		// Filter warehouse by company
 		frm.set_query("warehouse", function () {
@@ -217,7 +195,8 @@ frappe.ui.form.on("Shopify Store", {
 			};
 		});
 
-		frm.set_query("cash_bank_account", function () {
+		// Filter account in payment method mapping by company and type
+		frm.set_query("account", "payment_method_mapping", function () {
 			return {
 				filters: {
 					company: frm.doc.company,
@@ -244,7 +223,6 @@ frappe.ui.form.on("Shopify Store", {
 		frm.set_value("cost_center", "");
 		frm.set_value("default_sales_tax_account", "");
 		frm.set_value("default_shipping_charges_account", "");
-		frm.set_value("cash_bank_account", "");
 	},
 
 	auth_method(frm) {
@@ -307,5 +285,26 @@ frappe.ui.form.on("Shopify Store", {
 				"yellow"
 			);
 		}
+	},
+
+	set_naming_series_options(frm) {
+		// Fetch and set naming series options for each doctype
+		const doctypes = [
+			{ doctype: "Sales Order", field: "sales_order_series" },
+			{ doctype: "Delivery Note", field: "delivery_note_series" },
+			{ doctype: "Sales Invoice", field: "sales_invoice_series" }
+		];
+
+		doctypes.forEach(function(item) {
+			frappe.model.with_doctype(item.doctype, function() {
+				let options = frappe.get_meta(item.doctype).fields
+					.find(df => df.fieldname === "naming_series");
+				if (options && options.options) {
+					// Add empty option at the beginning for optional selection
+					let series_list = options.options.split("\n").filter(s => s.trim());
+					frm.set_df_property(item.field, "options", [""].concat(series_list));
+				}
+			});
+		});
 	}
 });
