@@ -1,3 +1,16 @@
+# [1.3.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.2.0...v1.3.0) (2026-01-19)
+
+
+### Bug Fixes
+
+* **order:** skip payment entry for split payments without transaction data ([c6641c0](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c6641c08e9aab390745a93445256e25b6c93ad79))
+* **store:** populate naming series dropdowns and add account filter for payment mapping ([ac29791](https://github.com/one-highflyer/nexwave_shopify_connector/commit/ac29791bc4acb3008ca700357512aab7fcc9346f))
+
+
+### Features
+
+* **order:** add payment method mapping for automatic payment entries ([544e0c7](https://github.com/one-highflyer/nexwave_shopify_connector/commit/544e0c7a25b6c51c7f78a5c7a297a05adde507a2))
+
 # [1.2.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.1.0...v1.2.0) (2026-01-18)
 
 
