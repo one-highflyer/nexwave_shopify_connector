@@ -91,6 +91,7 @@ class ShopifyStore(Document):
 	def validate(self):
 		self.normalize_shop_domain()
 		self.validate_auth_method()
+		self.validate_payment_method_mapping()
 
 	def normalize_shop_domain(self):
 		"""Normalize shop domain to just the domain without protocol or trailing slashes."""
@@ -126,6 +127,21 @@ class ShopifyStore(Document):
 				self.connected_user = None
 			if self.oauth_status and self.oauth_status != "Not Connected":
 				self.oauth_status = "Not Connected"
+
+	def validate_payment_method_mapping(self):
+		"""Validate that there are no duplicate Shopify gateways in payment method mapping."""
+		if not self.payment_method_mapping:
+			return
+
+		seen_gateways = set()
+		for row in self.payment_method_mapping:
+			if row.shopify_gateway in seen_gateways:
+				frappe.throw(
+					_("Duplicate payment method mapping for Shopify gateway '{0}'. Each gateway can only be mapped once.").format(
+						row.shopify_gateway
+					)
+				)
+			seen_gateways.add(row.shopify_gateway)
 
 	def on_update(self):
 		# TODO: Handle webhook registration/deregistration
