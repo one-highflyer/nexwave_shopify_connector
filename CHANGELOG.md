@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.3.0...v1.3.1) (2026-01-20)
+
+
+### Bug Fixes
+
+* **store:** rename ERPNext to NexWave in user-facing message ([2a20532](https://github.com/one-highflyer/nexwave_shopify_connector/commit/2a20532bf961a99b25380ebac29c8d98e88a3f35))
+
 # [1.3.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.2.0...v1.3.0) (2026-01-19)
 
 
