@@ -243,7 +243,7 @@ class ShopifyStore(Document):
 				frappe.msgprint(
 					_("Successfully fetched {0} location(s) from Shopify.").format(len(locations_data))
 					+ "<br><br>"
-					+ _("Please map each Shopify location to an ERPNext warehouse and save the document."),
+					+ _("Please map each Shopify location to a NexWave warehouse and save the document."),
 					title=_("Shopify Locations"),
 					indicator="green",
 				)
