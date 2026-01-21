@@ -409,3 +409,52 @@ class ShopifyStore(Document):
 			title=_("Shopify Order Sync"),
 			indicator="green" if result["errors"] == 0 else "orange",
 		)
+
+	@frappe.whitelist()
+	def register_webhooks(self):
+		"""
+		Register webhooks with Shopify for this store.
+
+		Clears existing webhooks and registers all required webhook events.
+		This is useful after adding new webhook events or when webhooks need to be re-registered.
+		"""
+		logger = get_logger()
+		logger.info("Registering webhooks for Shopify store: %s", self.shop_domain)
+
+		if not self.enabled:
+			frappe.throw(_("Store is not enabled"))
+
+		from nexwave_shopify_connector.nexwave_shopify.connection import register_webhooks
+
+		try:
+			webhooks = register_webhooks(self)
+			webhook_topics = [w.topic for w in webhooks]
+
+			logger.info(
+				"Successfully registered %s webhook(s) for store %s: %s",
+				len(webhooks),
+				self.shop_domain,
+				webhook_topics,
+			)
+
+			frappe.msgprint(
+				_("Registered {0} webhook(s) with Shopify:").format(len(webhooks))
+				+ "<br><br>"
+				+ "<br>".join(f"• {topic}" for topic in webhook_topics),
+				title=_("Webhooks Registered"),
+				indicator="green",
+			)
+
+		except Exception as e:
+			logger.error(
+				"Failed to register webhooks for store %s: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("Webhook Registration Failed - {0}").format(self.shop_domain),
+			)
+			frappe.db.commit()
+			frappe.throw(_("Failed to register webhooks: {0}").format(str(e)))

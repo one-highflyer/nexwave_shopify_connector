@@ -23,14 +23,17 @@ WEBHOOK_EVENTS = [
 	"orders/create",
 	"orders/paid",
 	"orders/cancelled",
+	"orders/fulfilled",
+	"orders/partially_fulfilled",
 ]
 
 # Event to handler mapping
-# TODO: Implement orders/fulfilled event
 EVENT_MAPPER = {
 	"orders/create": "nexwave_shopify_connector.nexwave_shopify.order.sync_sales_order",
 	"orders/paid": "nexwave_shopify_connector.nexwave_shopify.order.process_paid_order",
 	"orders/cancelled": "nexwave_shopify_connector.nexwave_shopify.order.cancel_order",
+	"orders/fulfilled": "nexwave_shopify_connector.nexwave_shopify.fulfillment.sync_fulfillment",
+	"orders/partially_fulfilled": "nexwave_shopify_connector.nexwave_shopify.fulfillment.sync_fulfillment",
 }
 
 

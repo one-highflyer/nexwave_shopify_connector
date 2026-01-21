@@ -91,6 +91,20 @@ frappe.ui.form.on("Shopify Store", {
 				});
 			}, __("Actions"));
 
+			frm.add_custom_button(__("Register Webhooks"), function () {
+				frappe.confirm(
+					__("This will re-register all webhooks with Shopify. Existing webhooks for this site will be cleared first. Continue?"),
+					function () {
+						frm.call({
+							method: "register_webhooks",
+							doc: frm.doc,
+							freeze: true,
+							freeze_message: __("Registering webhooks with Shopify...")
+						});
+					}
+				);
+			}, __("Actions"));
+
 			// Sync buttons - only show when relevant settings are enabled
 			if (frm.doc.enabled && frm.doc.enable_item_sync) {
 				frm.add_custom_button(__("Sync All Items"), function () {
