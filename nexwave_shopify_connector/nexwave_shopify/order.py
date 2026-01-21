@@ -945,6 +945,7 @@ def _create_sales_order(
 			"transaction_date": getdate(order.get("created_at")) or nowdate(),
 			"delivery_date": getdate(order.get("created_at")) or nowdate(),
 			"company": store.company,
+			"cost_center": store.cost_center,
 			"ignore_pricing_rule": 1,
 			"items": items,
 			"taxes": taxes,
@@ -1017,6 +1018,7 @@ def _get_order_items(order: dict, store) -> list:
 				"qty": qty,
 				"delivery_date": delivery_date,
 				"warehouse": store.warehouse,
+				"cost_center": store.cost_center,
 				"shopify_item_discount": per_item_discount,
 			}
 		)
@@ -1115,6 +1117,7 @@ def _add_shipping_charges(order: dict, store, items: list, taxes: list):
 					"qty": 1,
 					"delivery_date": delivery_date,
 					"warehouse": store.warehouse,
+					"cost_center": store.cost_center,
 				}
 			)
 		else:
@@ -1209,6 +1212,7 @@ def _create_sales_invoice(so, order: dict, store) -> "Document | None":
 	si.posting_date = posting_date
 	si.due_date = posting_date
 	si.naming_series = store.sales_invoice_series or "SI-Shopify-"
+	si.cost_center = store.cost_center
 
 	# Set cost center on items
 	for item in si.items:
