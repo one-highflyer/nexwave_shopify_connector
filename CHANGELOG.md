@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.3.1...v1.4.0) (2026-01-21)
+
+
+### Features
+
+* **order:** add cost center to Sales Order and Sales Invoice ([03dc4c3](https://github.com/one-highflyer/nexwave_shopify_connector/commit/03dc4c3dca989905d401910b09aa7941247ed0b3))
+
 ## [1.3.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.3.0...v1.3.1) (2026-01-20)
 
 
