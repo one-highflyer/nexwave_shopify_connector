@@ -35,8 +35,6 @@
   "delivery_note_series",
   "sales_invoice_series",
   "column_break_orders",
-  "sync_delivery_note",
-  "sync_sales_invoice",
   "last_order_sync",
   "section_break_order_automation",
   "auto_submit_sales_order",
@@ -67,7 +65,14 @@
   "section_break_taxes",
   "default_sales_tax_account",
   "default_shipping_charges_account",
-  "tax_accounts"
+  "tax_accounts",
+  "webhooks_section",
+  "enable_webhook_orders_create",
+  "enable_webhook_orders_paid",
+  "enable_webhook_orders_cancelled",
+  "enable_webhook_fulfillment",
+  "webhooks_section_cb",
+  "webhooks_help"
  ],
  "fields": [
   {
@@ -251,18 +256,6 @@
   {
    "fieldname": "column_break_orders",
    "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "fieldname": "sync_delivery_note",
-   "fieldtype": "Check",
-   "label": "Sync Delivery Note"
-  },
-  {
-   "default": "0",
-   "fieldname": "sync_sales_invoice",
-   "fieldtype": "Check",
-   "label": "Sync Sales Invoice"
   },
   {
    "fieldname": "last_order_sync",
@@ -459,6 +452,49 @@
    "fieldtype": "Table",
    "label": "Tax Accounts",
    "options": "Shopify Store Tax Account"
+  },
+  {
+   "fieldname": "webhooks_section",
+   "fieldtype": "Section Break",
+   "label": "Webhook Events"
+  },
+  {
+   "default": "1",
+   "description": "Process orders/create webhook events",
+   "fieldname": "enable_webhook_orders_create",
+   "fieldtype": "Check",
+   "label": "Process Order Create Webhooks"
+  },
+  {
+   "default": "1",
+   "description": "Process orders/paid webhook events",
+   "fieldname": "enable_webhook_orders_paid",
+   "fieldtype": "Check",
+   "label": "Process Order Paid Webhooks"
+  },
+  {
+   "default": "1",
+   "description": "Process orders/cancelled webhook events",
+   "fieldname": "enable_webhook_orders_cancelled",
+   "fieldtype": "Check",
+   "label": "Process Order Cancelled Webhooks"
+  },
+  {
+   "default": "1",
+   "description": "Process orders/fulfilled and orders/partially_fulfilled webhook events",
+   "fieldname": "enable_webhook_fulfillment",
+   "fieldtype": "Check",
+   "label": "Process Fulfillment Webhooks"
+  },
+  {
+   "fieldname": "webhooks_section_cb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "webhooks_help",
+   "fieldtype": "HTML",
+   "label": "Webhook Help",
+   "options": "<p class=\"text-muted\">These settings control which webhook events are registered with Shopify and processed when received. Disabling an event will unregister it from Shopify (on next webhook registration) and skip processing any incoming events of that type.</p>"
   }
  ],
  "index_web_pages_for_search": 1,
@@ -477,7 +513,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-22 12:00:00.000000",
+ "modified": "2026-01-22 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

@@ -28,24 +28,16 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 	)
 	frappe.flags.request_id = request_id
 
-	store = frappe.get_doc("Shopify Store", shopify_store)
+	# Set user context for permission checks (webhook runs as Guest)
+	frappe.set_user("Administrator")
 
-	if not store.sync_delivery_note:
-		logger.info(
-			"Delivery Note sync is disabled for store %s, skipping fulfillment",
-			shopify_store,
-		)
-		create_shopify_log(
-			status="Warning",
-			message="Delivery Note sync is disabled for this store",
-			shopify_store=shopify_store,
-		)
-		return
+	store = frappe.get_doc("Shopify Store", shopify_store)
 
 	try:
 		result = create_delivery_notes_from_fulfillments(payload, store)
 
 		if result["created"]:
+			logger.info("Created Delivery Notes for fulfillment: %s", result["created"])
 			message = f"Created {len(result['created'])} Delivery Note(s): {', '.join(result['created'])}"
 			if result.get("failed"):
 				message += f". Failed to create {result['failed']} Delivery Note(s) - check item mapping or warehouse configuration."
@@ -57,6 +49,7 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 				reference_name=result.get("sales_order"),
 			)
 		elif result.get("failed"):
+			logger.warning("Failed to create Delivery Notes for fulfillment: %s", result["failed"])
 			create_shopify_log(
 				status="Error",
 				message=f"Failed to create {result['failed']} Delivery Note(s) - check item mapping or warehouse configuration",
@@ -65,12 +58,14 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 				reference_name=result.get("sales_order"),
 			)
 		elif result["skipped"]:
+			logger.info("Skipped fulfillment(s): %s", result["skipped"])
 			create_shopify_log(
 				status="Warning",
 				message=f"Skipped {result['skipped']} fulfillment(s) - already processed",
 				shopify_store=shopify_store,
 			)
 		else:
+			logger.warning("No fulfillments to process: %s", result.get("message"))
 			create_shopify_log(
 				status="Warning",
 				message=result.get("message", "No fulfillments to process"),
@@ -78,6 +73,7 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 			)
 
 	except Exception as e:
+		frappe.db.rollback()
 		logger.error(
 			"Error processing fulfillment for order %s: %s",
 			payload.get("id"),
@@ -90,7 +86,7 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.rollback()
+		frappe.db.commit()
 		raise
 
 
@@ -255,12 +251,22 @@ def _create_delivery_note_from_fulfillment(
 	location_id = cstr(fulfillment.get("location_id") or "")
 	line_items = fulfillment.get("line_items", [])
 
+	logger.info(
+		"Creating DN from fulfillment %s: location_id=%s, line_items_count=%s, SO=%s",
+		fulfillment_id,
+		location_id,
+		len(line_items),
+		so.name,
+	)
+
 	if not line_items:
 		logger.warning("No line items in fulfillment %s", fulfillment_id)
 		return None
 
-	# Create DN from SO
-	dn = make_delivery_note(so.name, skip_item_mapping=True)
+	# Create DN from SO (skip item mapping so we can manually add fulfillment items)
+	logger.info("Creating DN from SO %s (skip_item_mapping=True)", so.name)
+	dn = make_delivery_note(so.name, kwargs={"skip_item_mapping": True})
+	logger.info("DN created from SO, customer=%s", dn.customer)
 
 	# Set Shopify fields
 	dn.shopify_store = store.name
@@ -272,16 +278,43 @@ def _create_delivery_note_from_fulfillment(
 	if store.delivery_note_series:
 		dn.naming_series = store.delivery_note_series
 
+	# Set cost center if configured
+	if store.cost_center:
+		dn.cost_center = store.cost_center
+
 	# Get warehouse for the location
 	warehouse = _get_warehouse_for_location(store, location_id)
+	logger.info("Resolved warehouse for location %s: %s", location_id, warehouse)
 
 	# Build items from fulfillment line items
+	logger.info(
+		"Building DN items from %s fulfillment line items, SO has %s items",
+		len(line_items),
+		len(so.items),
+	)
 	dn_items = _get_fulfillment_items(
 		so_items=so.items,
 		fulfillment_items=line_items,
 		warehouse=warehouse,
 		store=store,
 	)
+
+	# Add shipping items if configured
+	if store.add_shipping_as_item and store.shipping_item:
+		for so_item in so.items:
+			if so_item.item_code == store.shipping_item:
+				dn_items.append({
+					"item_code": so_item.item_code,
+					"item_name": so_item.item_name,
+					"description": so_item.description,
+					"qty": so_item.qty,
+					"rate": so_item.rate,
+					"warehouse": warehouse or store.warehouse,
+					"against_sales_order": so_item.parent,
+					"so_detail": so_item.name,
+					"cost_center": store.cost_center,
+				})
+				logger.info("Added shipping item %s to DN", so_item.item_code)
 
 	if not dn_items:
 		logger.warning(
@@ -290,17 +323,31 @@ def _create_delivery_note_from_fulfillment(
 		)
 		return None
 
+	logger.info("Built %s DN items from fulfillment", len(dn_items))
+	for idx, item in enumerate(dn_items):
+		logger.info(
+			"  DN item %s: item_code=%s, qty=%s, warehouse=%s, so_detail=%s",
+			idx + 1,
+			item.get("item_code"),
+			item.get("qty"),
+			item.get("warehouse"),
+			item.get("so_detail"),
+		)
+
 	dn.items = []
 	for item in dn_items:
 		dn.append("items", item)
 
+	logger.info("Inserting and submitting DN for fulfillment %s", fulfillment_id)
 	dn.flags.ignore_mandatory = True
 	dn.insert(ignore_permissions=True)
 	dn.submit()
+	logger.info("DN %s created and submitted successfully", dn.name)
 
 	# Add tracking info as comment (must be after insert/submit)
 	tracking_info = _get_tracking_info(fulfillment)
 	if tracking_info:
+		logger.info("Adding tracking info to DN %s: %s", dn.name, tracking_info[:100])
 		try:
 			dn.add_comment(text=tracking_info, comment_type="Comment")
 		except Exception as e:
