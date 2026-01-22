@@ -8,7 +8,12 @@ from shopify.api_version import ApiVersion
 from shopify.resources import CustomCollection, Location, Shop, SmartCollection
 from shopify.session import Session
 
-from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION, get_access_token
+from nexwave_shopify_connector.nexwave_shopify.connection import (
+	DEFAULT_API_VERSION,
+	WEBHOOK_EVENT_FLAGS,
+	WEBHOOK_EVENTS,
+	get_access_token,
+)
 from nexwave_shopify_connector.nexwave_shopify.oauth import get_callback_url
 from nexwave_shopify_connector.utils.logger import get_logger
 
@@ -36,9 +41,6 @@ class ShopifyStore(Document):
 		)
 		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_warehouse_mapping.shopify_store_warehouse_mapping import (
 			ShopifyStoreWarehouseMapping,
-		)
-		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_webhook.shopify_store_webhook import (
-			ShopifyStoreWebhook,
 		)
 
 		access_token: DF.Password | None
@@ -86,7 +88,7 @@ class ShopifyStore(Document):
 		update_shopify_on_item_update: DF.Check
 		warehouse: DF.Link | None
 		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
-		webhooks: DF.Table[ShopifyStoreWebhook]
+
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
@@ -137,9 +139,9 @@ class ShopifyStore(Document):
 		for row in self.payment_method_mapping:
 			if row.shopify_gateway in seen_gateways:
 				frappe.throw(
-					_("Duplicate payment method mapping for Shopify gateway '{0}'. Each gateway can only be mapped once.").format(
-						row.shopify_gateway
-					)
+					_(
+						"Duplicate payment method mapping for Shopify gateway '{0}'. Each gateway can only be mapped once."
+					).format(row.shopify_gateway)
 				)
 			seen_gateways.add(row.shopify_gateway)
 
@@ -409,3 +411,166 @@ class ShopifyStore(Document):
 			title=_("Shopify Order Sync"),
 			indicator="green" if result["errors"] == 0 else "orange",
 		)
+
+	def get_expected_webhook_topics(self) -> list[str]:
+		"""
+		Get the list of webhook topics that should be registered based on store settings.
+
+		Returns:
+			List of webhook topic strings that are enabled for this store.
+		"""
+		return [event for event in WEBHOOK_EVENTS if getattr(self, WEBHOOK_EVENT_FLAGS.get(event, ""), True)]
+
+	@frappe.whitelist()
+	def register_webhooks(self):
+		"""
+		Register webhooks with Shopify for this store.
+
+		Clears existing webhooks and registers all required webhook events.
+		This is useful after adding new webhook events or when webhooks need to be re-registered.
+		"""
+		logger = get_logger()
+		logger.info("Registering webhooks for Shopify store: %s", self.shop_domain)
+
+		if not self.enabled:
+			frappe.throw(_("Store is not enabled"))
+
+		from nexwave_shopify_connector.nexwave_shopify.connection import register_webhooks
+
+		try:
+			webhooks = register_webhooks(self)
+			webhook_topics = [w.topic for w in webhooks]
+			expected_topics = self.get_expected_webhook_topics()
+
+			# Determine missing topics
+			missing_topics = [t for t in expected_topics if t not in webhook_topics]
+
+			if missing_topics:
+				logger.warning(
+					"Partial webhook registration for store %s: missing topics %s",
+					self.shop_domain,
+					missing_topics,
+				)
+
+			if len(webhook_topics) == len(expected_topics) and not missing_topics:
+				# Full success
+				logger.info(
+					"Successfully registered %s webhook(s) for store %s: %s",
+					len(webhooks),
+					self.shop_domain,
+					webhook_topics,
+				)
+				frappe.msgprint(
+					_("Registered {0} webhook(s) with Shopify:").format(len(webhooks))
+					+ "<br><br>"
+					+ "<br>".join(f"• {topic}" for topic in webhook_topics),
+					title=_("Webhooks Registered"),
+					indicator="green",
+				)
+			elif len(webhook_topics) == 0:
+				# Complete failure
+				logger.error(
+					"Failed to register any webhooks for store %s: expected %s",
+					self.shop_domain,
+					expected_topics,
+				)
+				frappe.msgprint(
+					_("Failed to register any webhooks with Shopify.")
+					+ "<br><br>"
+					+ _("<b>Expected:</b>")
+					+ "<br>"
+					+ "<br>".join(f"• {topic}" for topic in expected_topics)
+					+ "<br><br>"
+					+ _("Check NexWave Shopify Log for error details."),
+					title=_("Webhook Registration Failed"),
+					indicator="red",
+				)
+			else:
+				# Partial success
+				logger.warning(
+					"Partially registered webhooks for store %s: registered %s, missing %s",
+					self.shop_domain,
+					webhook_topics,
+					missing_topics,
+				)
+				frappe.msgprint(
+					_("Partially registered webhooks with Shopify.")
+					+ "<br><br>"
+					+ _("<b>Registered ({0}):</b>").format(len(webhook_topics))
+					+ "<br>"
+					+ "<br>".join(f"• {topic}" for topic in webhook_topics)
+					+ "<br><br>"
+					+ _("<b>Missing ({0}):</b>").format(len(missing_topics))
+					+ "<br>"
+					+ "<br>".join(f"• {topic}" for topic in missing_topics)
+					+ "<br><br>"
+					+ _("Check NexWave Shopify Log for error details."),
+					title=_("Webhook Registration Incomplete"),
+					indicator="orange",
+				)
+
+		except Exception as e:
+			logger.error(
+				"Failed to register webhooks for store %s: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("Webhook Registration Failed - {0}").format(self.shop_domain),
+			)
+			frappe.db.commit()
+			frappe.throw(_("Failed to register webhooks: {0}").format(str(e)))
+
+	@frappe.whitelist()
+	def fetch_webhooks(self):
+		"""Fetch registered webhooks from Shopify for this site.
+
+		Returns:
+			list: List of webhook dicts with topic, id, and address keys.
+		"""
+		from shopify.resources import Webhook
+
+		from nexwave_shopify_connector.nexwave_shopify.connection import get_current_domain_name
+
+		logger = get_logger()
+		logger.info("Fetching webhooks from Shopify for store: %s", self.shop_domain)
+
+		if not self.enabled:
+			frappe.throw(_("Store is not enabled"))
+
+		try:
+			self._init_shopify_api_versions()
+			auth_details = self._get_auth_details()
+
+			with Session.temp(*auth_details):
+				webhooks = Webhook.find()
+
+				# Filter to webhooks for this site
+				url = get_current_domain_name()
+				site_webhooks = [
+					{"topic": w.topic, "id": w.id, "address": w.address} for w in webhooks if url in w.address
+				]
+
+				logger.info(
+					"Fetched %s webhook(s) for store %s",
+					len(site_webhooks),
+					self.shop_domain,
+				)
+
+				return site_webhooks
+
+		except Exception as e:
+			logger.error(
+				"Failed to fetch webhooks for store %s: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("Fetch Webhooks Failed - {0}").format(self.shop_domain),
+			)
+			frappe.db.commit()
+			frappe.throw(_("Failed to fetch webhooks: {0}").format(str(e)))

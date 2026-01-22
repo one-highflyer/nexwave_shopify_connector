@@ -100,17 +100,42 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 		shopify_store: Shopify Store name
 	"""
 	logger = get_logger()
-	logger.info("Syncing sales order %s for Shopify store: %s", payload["id"], shopify_store)
+	logger.info(
+		"[orders/create] Webhook received - order_id: %s, order_number: %s, store: %s, request_id: %s",
+		payload.get("id"),
+		payload.get("name"),
+		shopify_store,
+		request_id,
+	)
+	logger.info(
+		"[orders/create] Order details - financial_status: %s, fulfillment_status: %s, total_price: %s, currency: %s",
+		payload.get("financial_status"),
+		payload.get("fulfillment_status"),
+		payload.get("total_price"),
+		payload.get("currency"),
+	)
 	frappe.flags.request_id = request_id
 
+
+	# Set user context for permission checks (webhook runs as Guest)
+	frappe.set_user("Administrator")
+
 	store = frappe.get_doc("Shopify Store", shopify_store)
+	logger.info(
+		"[orders/create] Store settings - auto_submit: %s, auto_invoice: %s, auto_payment: %s",
+		store.auto_submit_sales_order,
+		store.auto_create_invoice,
+		store.auto_create_payment_entry,
+	)
 
 	# Check for duplicate first
 	if frappe.db.get_value(
 		"Sales Order", filters={"shopify_order_id": cstr(payload["id"]), "docstatus": ["!=", 2]}
 	):
 		logger.warning(
-			"Sales order %s already exists, not synced. Shopify store: %s", payload["id"], shopify_store
+			"[orders/create] Duplicate detected - order %s already exists, skipping. Store: %s",
+			payload["id"],
+			shopify_store,
 		)
 		create_shopify_log(
 			status="Warning",
@@ -120,9 +145,15 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 		return
 
 	try:
+		logger.info("[orders/create] Processing order %s", payload["id"])
 		so_name = _process_order(payload, store, request_id)
 
 		if so_name:
+			logger.info(
+				"[orders/create] Successfully created Sales Order %s for Shopify order %s",
+				so_name,
+				payload["id"],
+			)
 			create_shopify_log(
 				status="Success",
 				message=f"Created Sales Order {so_name}",
@@ -131,6 +162,7 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 				reference_name=so_name,
 			)
 		else:
+			logger.info("[orders/create] Order %s was skipped (duplicate or cancelled)", payload["id"])
 			create_shopify_log(
 				status="Warning",
 				message="Sales order already exists, not synced",
@@ -138,6 +170,12 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 			)
 
 	except Exception as e:
+		logger.error(
+			"[orders/create] Error processing order %s: %s",
+			payload["id"],
+			str(e),
+			exc_info=True,
+		)
 		create_shopify_log(
 			status="Error",
 			exception=frappe.get_traceback(),
@@ -163,15 +201,42 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 	frappe.flags.request_id = request_id
 
+	# Set user context for permission checks (webhook runs as Guest)
+	frappe.set_user("Administrator")
+
+
 	order = payload
+	logger.info(
+		"[orders/paid] Webhook received - order_id: %s, order_number: %s, store: %s, request_id: %s",
+		order.get("id"),
+		order.get("name"),
+		shopify_store,
+		request_id,
+	)
+	logger.info(
+		"[orders/paid] Order details - financial_status: %s, total_price: %s, currency: %s",
+		order.get("financial_status"),
+		order.get("total_price"),
+		order.get("currency"),
+	)
+
 	store = frappe.get_doc("Shopify Store", shopify_store)
-	logger.info("Processing paid order %s for Shopify store: %s", order["id"], shopify_store)
+	logger.info(
+		"[orders/paid] Store settings - auto_submit: %s, auto_invoice: %s, auto_payment: %s",
+		store.auto_submit_sales_order,
+		store.auto_create_invoice,
+		store.auto_create_payment_entry,
+	)
 
 	try:
 		# Find existing Sales Order
 		so_name = frappe.db.get_value("Sales Order", {"shopify_order_id": cstr(order["id"])})
 
 		if not so_name:
+			logger.warning(
+				"[orders/paid] Sales Order not found for Shopify order %s, skipping",
+				order["id"],
+			)
 			create_shopify_log(
 				status="Warning",
 				message="Sales Order not found for paid order",
@@ -180,22 +245,45 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 			return
 
 		so = frappe.get_doc("Sales Order", so_name)
+		logger.info(
+			"[orders/paid] Found Sales Order %s - docstatus: %s, per_billed: %s",
+			so.name,
+			so.docstatus,
+			so.per_billed,
+		)
 
 		# Update financial status
 		frappe.db.set_value("Sales Order", so_name, "shopify_financial_status", "paid")
+		logger.info("[orders/paid] Updated financial status to 'paid' for SO %s", so_name)
 
 		# Submit if draft and auto-submit enabled
 		if so.docstatus == 0 and store.auto_submit_sales_order:
+			so.reload()
 			so.submit()
+			logger.info("[orders/paid] Submitted Sales Order %s", so.name)
+		elif so.docstatus == 0:
+			logger.info("[orders/paid] SO %s is draft but auto_submit is disabled", so.name)
 
 		# Create invoice if enabled and SO is submitted
 		if store.auto_create_invoice and so.docstatus == 1 and not so.per_billed:
+			logger.info("[orders/paid] Creating Sales Invoice for SO %s", so.name)
 			si = _create_sales_invoice(so, order, store)
 
-			if store.auto_create_payment_entry and si and si.grand_total > 0:
-				_create_payment_entries(si, order, store, getdate(order.get("created_at")))
+			if si:
+				logger.info("[orders/paid] Created Sales Invoice %s", si.name)
+				if store.auto_create_payment_entry and si.grand_total > 0:
+					logger.info("[orders/paid] Creating Payment Entry for SI %s", si.name)
+					_create_payment_entries(si, order, store, getdate(order.get("created_at")))
+			else:
+				logger.info("[orders/paid] Sales Invoice already exists or could not be created")
+		elif not store.auto_create_invoice:
+			logger.info("[orders/paid] auto_create_invoice is disabled, skipping invoice creation")
+		elif so.docstatus != 1:
+			logger.info("[orders/paid] SO %s not submitted (docstatus=%s), skipping invoice", so.name, so.docstatus)
+		elif so.per_billed:
+			logger.info("[orders/paid] SO %s already billed (%s%%), skipping invoice", so.name, so.per_billed)
 
-		logger.info("Processed paid order %s for Shopify store: %s", order["id"], shopify_store)
+		logger.info("[orders/paid] Successfully processed paid order %s -> SO %s", order["id"], so.name)
 
 		create_shopify_log(
 			status="Success",
@@ -206,6 +294,12 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 		)
 
 	except Exception as e:
+		logger.error(
+			"[orders/paid] Error processing paid order %s: %s",
+			order["id"],
+			str(e),
+			exc_info=True,
+		)
 		create_shopify_log(
 			status="Error",
 			exception=frappe.get_traceback(),
@@ -227,10 +321,25 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 		request_id: Log entry name for tracking
 		shopify_store: Shopify Store name
 	"""
+	logger = get_logger()
+	# Set user context for permission checks (webhook runs as Guest)
 	frappe.set_user("Administrator")
+
 	frappe.flags.request_id = request_id
 
 	order = payload
+	logger.info(
+		"[orders/cancelled] Webhook received - order_id: %s, order_number: %s, store: %s, request_id: %s",
+		order.get("id"),
+		order.get("name"),
+		shopify_store,
+		request_id,
+	)
+	logger.info(
+		"[orders/cancelled] Order details - financial_status: %s, cancel_reason: %s",
+		order.get("financial_status"),
+		order.get("cancel_reason"),
+	)
 
 	try:
 		order_id = order["id"]
@@ -239,6 +348,10 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 		so_name = frappe.db.get_value("Sales Order", {"shopify_order_id": cstr(order_id)})
 
 		if not so_name:
+			logger.warning(
+				"[orders/cancelled] Sales Order not found for Shopify order %s, skipping",
+				order_id,
+			)
 			create_shopify_log(
 				status="Warning",
 				message="Sales Order does not exist for cancellation",
@@ -247,27 +360,49 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 			return
 
 		so = frappe.get_doc("Sales Order", so_name)
+		logger.info(
+			"[orders/cancelled] Found Sales Order %s - docstatus: %s",
+			so.name,
+			so.docstatus,
+		)
 
 		# Check for linked documents
 		sales_invoice = frappe.db.get_value("Sales Invoice", {"shopify_order_id": cstr(order_id)})
 		delivery_notes = frappe.db.get_list("Delivery Note", filters={"shopify_order_id": cstr(order_id)})
 
+		logger.info(
+			"[orders/cancelled] Linked documents - SI: %s, DN count: %s",
+			sales_invoice,
+			len(delivery_notes),
+		)
+
 		# Update status on linked docs
 		if sales_invoice:
 			frappe.db.set_value("Sales Invoice", sales_invoice, "shopify_financial_status", order_status)
+			logger.info("[orders/cancelled] Updated SI %s financial status to '%s'", sales_invoice, order_status)
 
 		for dn in delivery_notes:
 			frappe.db.set_value("Delivery Note", dn.name, "shopify_financial_status", order_status)
+			logger.info("[orders/cancelled] Updated DN %s financial status to '%s'", dn.name, order_status)
 
 		# Cancel SO only if no linked docs and it's submitted
 		if not sales_invoice and not delivery_notes and so.docstatus == 1:
 			so.cancel()
+			logger.info("[orders/cancelled] Cancelled Sales Order %s", so.name)
 		elif so.docstatus == 0:
 			# Draft - just delete or update status
 			frappe.db.set_value("Sales Order", so.name, "shopify_financial_status", "voided")
+			logger.info("[orders/cancelled] Marked draft SO %s as voided", so.name)
 		else:
 			# Has linked docs - just update status
 			frappe.db.set_value("Sales Order", so.name, "shopify_financial_status", order_status)
+			logger.info(
+				"[orders/cancelled] SO %s has linked docs, only updated status to '%s'",
+				so.name,
+				order_status,
+			)
+
+		logger.info("[orders/cancelled] Successfully processed cancellation for order %s -> SO %s", order_id, so.name)
 
 		create_shopify_log(
 			status="Success",
@@ -278,6 +413,12 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 		)
 
 	except Exception as e:
+		logger.error(
+			"[orders/cancelled] Error processing cancellation for order %s: %s",
+			order.get("id"),
+			str(e),
+			exc_info=True,
+		)
 		create_shopify_log(
 			status="Error",
 			exception=frappe.get_traceback(),

@@ -14,6 +14,7 @@ from shopify.resources import Webhook
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
+from nexwave_shopify_connector.utils.logger import get_logger
 
 # Default API version (use a recent stable version)
 DEFAULT_API_VERSION = "2024-10"
@@ -23,14 +24,26 @@ WEBHOOK_EVENTS = [
 	"orders/create",
 	"orders/paid",
 	"orders/cancelled",
+	"orders/fulfilled",
+	"orders/partially_fulfilled",
 ]
 
 # Event to handler mapping
-# TODO: Implement orders/fulfilled event
 EVENT_MAPPER = {
 	"orders/create": "nexwave_shopify_connector.nexwave_shopify.order.sync_sales_order",
 	"orders/paid": "nexwave_shopify_connector.nexwave_shopify.order.process_paid_order",
 	"orders/cancelled": "nexwave_shopify_connector.nexwave_shopify.order.cancel_order",
+	"orders/fulfilled": "nexwave_shopify_connector.nexwave_shopify.fulfillment.sync_fulfillment",
+	"orders/partially_fulfilled": "nexwave_shopify_connector.nexwave_shopify.fulfillment.sync_fulfillment",
+}
+
+# Mapping of webhook events to their corresponding store flag fields
+WEBHOOK_EVENT_FLAGS = {
+	"orders/create": "enable_webhook_orders_create",
+	"orders/paid": "enable_webhook_orders_paid",
+	"orders/cancelled": "enable_webhook_orders_cancelled",
+	"orders/fulfilled": "enable_webhook_fulfillment",
+	"orders/partially_fulfilled": "enable_webhook_fulfillment",
 }
 
 
@@ -215,9 +228,9 @@ def get_access_token(store: "Document") -> str:
 		auth_method = getattr(store, "auth_method", None) or "Legacy (Access Token)"
 		if auth_method == "OAuth":
 			frappe.throw(
-				_("OAuth not connected for store {0}. Please click 'Connect to Shopify' to authorize.").format(
-					store.name
-				)
+				_(
+					"OAuth not connected for store {0}. Please click 'Connect to Shopify' to authorize."
+				).format(store.name)
 			)
 		else:
 			frappe.throw(_("Access Token is required for store {0}").format(store.name))
@@ -262,22 +275,39 @@ def register_webhooks(store: Document) -> list[Webhook]:
 	"""
 	Register required webhooks with Shopify for a specific store.
 
+	Only registers events that are enabled on the store settings.
+
 	Args:
 		store: Shopify Store document
 
 	Returns:
 		List of registered Webhook objects
 	"""
+	logger = get_logger()
 	new_webhooks = []
 
 	# Clear stale webhooks first
 	unregister_webhooks(store)
 
+	# Filter events based on store settings
+	enabled_events = [
+		event
+		for event in WEBHOOK_EVENTS
+		if getattr(store, WEBHOOK_EVENT_FLAGS.get(event, ""), True)
+	]
+
+	logger.info(
+		"Registering %d webhook events for store %s: %s",
+		len(enabled_events),
+		store.name,
+		enabled_events,
+	)
+
 	api_version = store.api_version or DEFAULT_API_VERSION
 	auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
 
 	with Session.temp(*auth_details):
-		for topic in WEBHOOK_EVENTS:
+		for topic in enabled_events:
 			webhook = Webhook.create({"topic": topic, "address": get_callback_url(store), "format": "json"})
 
 			if webhook.is_valid():
@@ -317,20 +347,25 @@ def store_request_data() -> None:
 
 	Receives webhook calls, validates HMAC, resolves store, and enqueues processing.
 	"""
+	logger = get_logger()
 	if not frappe.request:
 		return
 
+	logger.info("Received webhook request: %s", frappe.request.data)
 	# Get shop domain from header to resolve store
 	shop_domain = frappe.get_request_header("X-Shopify-Shop-Domain")
 	if not shop_domain:
+		logger.warning("Missing X-Shopify-Shop-Domain header in webhook")
 		frappe.throw(_("Missing X-Shopify-Shop-Domain header"))
 
 	# Resolve store
 	store_name = get_shopify_store_by_domain(shop_domain)
 	if not store_name:
+		logger.warning("Unknown Shopify Store: %s", shop_domain)
 		frappe.throw(_("Unknown Shopify Store: {0}").format(shop_domain))
 
 	store = frappe.get_doc("Shopify Store", store_name)
+	logger.info("Resolved Shopify Store: %s", store.name)
 
 	# Validate HMAC using store's shared secret
 	hmac_header = frappe.get_request_header("X-Shopify-Hmac-Sha256")
@@ -342,10 +377,28 @@ def store_request_data() -> None:
 	# Parse data
 	data = json.loads(frappe.request.data)
 	event = frappe.request.headers.get("X-Shopify-Topic")
+	logger.info("Received webhook event: %s", event)
 
 	if event not in EVENT_MAPPER:
 		create_shopify_log(
 			status="Error", shopify_store=store.name, request_data=data, exception=f"Unknown event: {event}"
+		)
+		logger.warning("Unknown webhook event: %s", event)
+		return
+
+	# Check if this event type is enabled for processing
+	event_flag = WEBHOOK_EVENT_FLAGS.get(event)
+	if event_flag and not getattr(store, event_flag, True):
+		logger.info(
+			"[%s] Webhook event disabled for store %s, skipping",
+			event,
+			store.name,
+		)
+		create_shopify_log(
+			status="Warning",
+			message=f"Webhook event '{event}' is disabled for this store",
+			shopify_store=store.name,
+			request_data=data,
 		)
 		return
 
@@ -363,6 +416,8 @@ def store_request_data() -> None:
 		shopify_store=store.name,
 	)
 
+	logger.info("Enqueued background job for event: %s", event)
+
 
 def _validate_request(req, hmac_header: str, secret_key: str) -> None:
 	"""
@@ -373,7 +428,9 @@ def _validate_request(req, hmac_header: str, secret_key: str) -> None:
 		hmac_header: HMAC header value from Shopify
 		secret_key: Store's shared secret
 	"""
+	logger = get_logger()
 	if not secret_key:
+		logger.warning("Shared secret not configured for this store")
 		frappe.throw(_("Shared secret not configured for this store"))
 
 	sig = base64.b64encode(hmac.new(secret_key.encode("utf8"), req.data, hashlib.sha256).digest())
@@ -381,5 +438,11 @@ def _validate_request(req, hmac_header: str, secret_key: str) -> None:
 	if sig != bytes(hmac_header.encode()):
 		shop_domain = frappe.get_request_header("X-Shopify-Shop-Domain")
 		store_name = get_shopify_store_by_domain(shop_domain)
-		create_shopify_log(status="Error", shopify_store=store_name, request_data=req.data)
-		frappe.throw(_("Unverified Webhook Data"))
+		logger.warning("Unverified webhook data (signature mismatch) for store: %s", store_name)
+		create_shopify_log(
+			status="Error",
+			shopify_store=store_name,
+			request_data=req.data,
+			exception=f"Unverified webhook data (signature mismatch) for store: {store_name}",
+		)
+		frappe.throw(_("Unverified Webhook Data (signature mismatch)"))

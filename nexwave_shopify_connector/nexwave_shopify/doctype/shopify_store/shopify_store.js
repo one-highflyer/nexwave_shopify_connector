@@ -91,6 +91,76 @@ frappe.ui.form.on("Shopify Store", {
 				});
 			}, __("Actions"));
 
+			frm.add_custom_button(__("Register Webhooks"), function () {
+				frappe.confirm(
+					__("This will re-register all webhooks with Shopify. Existing webhooks for this site will be cleared first. Continue?"),
+					function () {
+						frm.call({
+							method: "register_webhooks",
+							doc: frm.doc,
+							freeze: true,
+							freeze_message: __("Registering webhooks with Shopify...")
+						});
+					}
+				);
+			}, __("Actions"));
+
+			frm.add_custom_button(__("Fetch Webhooks"), function () {
+				frm.call({
+					method: "fetch_webhooks",
+					doc: frm.doc,
+					freeze: true,
+					freeze_message: __("Fetching webhooks from Shopify..."),
+					callback: function (r) {
+						let webhooks = r.message || [];
+
+						if (!webhooks.length) {
+							frappe.msgprint({
+								title: __("Shopify Webhooks"),
+								message: __("No webhooks registered for this site."),
+								indicator: "yellow"
+							});
+							return;
+						}
+
+						let rows = webhooks.map(w =>
+							`<tr>
+								<td>${w.topic}</td>
+								<td>${w.id}</td>
+								<td style="word-break: break-all;">${w.address}</td>
+							</tr>`
+						).join("");
+
+						let html = `
+							<table class="table table-bordered" style="width: 100%;">
+								<thead>
+									<tr>
+										<th style="width: 180px;">${__("Topic")}</th>
+										<th style="width: 140px;">${__("Webhook ID")}</th>
+										<th>${__("URL")}</th>
+									</tr>
+								</thead>
+								<tbody>${rows}</tbody>
+							</table>
+						`;
+
+						let dialog = new frappe.ui.Dialog({
+							title: __("Registered Webhooks ({0})", [webhooks.length]),
+							size: "large",
+							fields: [
+								{
+									fieldtype: "HTML",
+									fieldname: "webhooks_html"
+								}
+							]
+						});
+
+						dialog.fields_dict.webhooks_html.$wrapper.html(html);
+						dialog.show();
+					}
+				});
+			}, __("Actions"));
+
 			// Sync buttons - only show when relevant settings are enabled
 			if (frm.doc.enabled && frm.doc.enable_item_sync) {
 				frm.add_custom_button(__("Sync All Items"), function () {
@@ -295,8 +365,8 @@ frappe.ui.form.on("Shopify Store", {
 			{ doctype: "Sales Invoice", field: "sales_invoice_series" }
 		];
 
-		doctypes.forEach(function(item) {
-			frappe.model.with_doctype(item.doctype, function() {
+		doctypes.forEach(function (item) {
+			frappe.model.with_doctype(item.doctype, function () {
 				let options = frappe.get_meta(item.doctype).fields
 					.find(df => df.fieldname === "naming_series");
 				if (options && options.options) {
