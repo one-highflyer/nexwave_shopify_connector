@@ -37,9 +37,6 @@ class ShopifyStore(Document):
 		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_warehouse_mapping.shopify_store_warehouse_mapping import (
 			ShopifyStoreWarehouseMapping,
 		)
-		from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store_webhook.shopify_store_webhook import (
-			ShopifyStoreWebhook,
-		)
 
 		access_token: DF.Password | None
 		add_shipping_as_item: DF.Check
@@ -86,7 +83,7 @@ class ShopifyStore(Document):
 		update_shopify_on_item_update: DF.Check
 		warehouse: DF.Link | None
 		warehouse_mapping: DF.Table[ShopifyStoreWarehouseMapping]
-		webhooks: DF.Table[ShopifyStoreWebhook]
+
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
@@ -137,9 +134,9 @@ class ShopifyStore(Document):
 		for row in self.payment_method_mapping:
 			if row.shopify_gateway in seen_gateways:
 				frappe.throw(
-					_("Duplicate payment method mapping for Shopify gateway '{0}'. Each gateway can only be mapped once.").format(
-						row.shopify_gateway
-					)
+					_(
+						"Duplicate payment method mapping for Shopify gateway '{0}'. Each gateway can only be mapped once."
+					).format(row.shopify_gateway)
 				)
 			seen_gateways.add(row.shopify_gateway)
 
@@ -458,3 +455,57 @@ class ShopifyStore(Document):
 			)
 			frappe.db.commit()
 			frappe.throw(_("Failed to register webhooks: {0}").format(str(e)))
+
+	@frappe.whitelist()
+	def fetch_webhooks(self):
+		"""Fetch registered webhooks from Shopify for this site.
+
+		Returns:
+			list: List of webhook dicts with topic, id, and address keys.
+		"""
+		from shopify.resources import Webhook
+
+		from nexwave_shopify_connector.nexwave_shopify.connection import get_current_domain_name
+
+		logger = get_logger()
+		logger.info("Fetching webhooks from Shopify for store: %s", self.shop_domain)
+
+		if not self.enabled:
+			frappe.throw(_("Store is not enabled"))
+
+		try:
+			self._init_shopify_api_versions()
+			auth_details = self._get_auth_details()
+
+			with Session.temp(*auth_details):
+				webhooks = Webhook.find()
+
+				# Filter to webhooks for this site
+				url = get_current_domain_name()
+				site_webhooks = [
+					{"topic": w.topic, "id": w.id, "address": w.address}
+					for w in webhooks
+					if url in w.address
+				]
+
+				logger.info(
+					"Fetched %s webhook(s) for store %s",
+					len(site_webhooks),
+					self.shop_domain,
+				)
+
+				return site_webhooks
+
+		except Exception as e:
+			logger.error(
+				"Failed to fetch webhooks for store %s: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("Fetch Webhooks Failed - {0}").format(self.shop_domain),
+			)
+			frappe.db.commit()
+			frappe.throw(_("Failed to fetch webhooks: {0}").format(str(e)))

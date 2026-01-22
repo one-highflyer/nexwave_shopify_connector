@@ -67,9 +67,7 @@
   "section_break_taxes",
   "default_sales_tax_account",
   "default_shipping_charges_account",
-  "tax_accounts",
-  "section_break_webhooks",
-  "webhooks"
+  "tax_accounts"
  ],
  "fields": [
   {
@@ -461,18 +459,6 @@
    "fieldtype": "Table",
    "label": "Tax Accounts",
    "options": "Shopify Store Tax Account"
-  },
-  {
-   "fieldname": "section_break_webhooks",
-   "fieldtype": "Section Break",
-   "label": "Webhooks"
-  },
-  {
-   "fieldname": "webhooks",
-   "fieldtype": "Table",
-   "label": "Registered Webhooks",
-   "options": "Shopify Store Webhook",
-   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
@@ -491,7 +477,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-19 12:00:00.000000",
+ "modified": "2026-01-22 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
