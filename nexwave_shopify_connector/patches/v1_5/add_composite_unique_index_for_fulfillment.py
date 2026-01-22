@@ -12,6 +12,13 @@ def execute():
 	to allow the same fulfillment ID across different stores while preventing
 	duplicates within a single store.
 	"""
+	# Check if the required columns exist (custom fields may not be installed yet)
+	columns = frappe.db.get_table_columns("tabDelivery Note")
+	if "shopify_store" not in columns or "shopify_fulfillment_id" not in columns:
+		# Custom fields not installed yet, skip this patch
+		# The index will be created on next migrate after fixtures are applied
+		return
+
 	# First, drop the old unique index if it exists
 	old_index_name = "shopify_fulfillment_id"
 	if frappe.db.has_index("tabDelivery Note", old_index_name):
