@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.5.0...v1.5.1) (2026-01-22)
+
+
+### Bug Fixes
+
+* **patch:** check if columns exist before creating index ([7036339](https://github.com/one-highflyer/nexwave_shopify_connector/commit/70363393f13c5b53ad965c3550508d5180eceb8b))
+
 # [1.5.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.4.0...v1.5.0) (2026-01-22)
 
 
