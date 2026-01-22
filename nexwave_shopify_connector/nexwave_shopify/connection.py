@@ -367,9 +367,12 @@ def store_request_data() -> None:
 	store = frappe.get_doc("Shopify Store", store_name)
 	logger.info("Resolved Shopify Store: %s", store.name)
 
-	# Validate HMAC using store's shared secret
+	# Validate HMAC - use shared_secret if set (manual override), else client_secret for OAuth
 	hmac_header = frappe.get_request_header("X-Shopify-Hmac-Sha256")
-	_validate_request(frappe.request, hmac_header, store.shared_secret)
+	webhook_secret = store.shared_secret or None
+	if not webhook_secret and store.auth_method == "OAuth":
+		webhook_secret = store.get_password("client_secret")
+	_validate_request(frappe.request, hmac_header, webhook_secret)
 
 	# Set store context
 	frappe.flags.shopify_store = store.name

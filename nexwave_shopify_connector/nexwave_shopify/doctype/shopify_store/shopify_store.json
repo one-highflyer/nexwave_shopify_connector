@@ -165,10 +165,10 @@
    "read_only": 1
   },
   {
-   "description": "For webhook HMAC validation",
+   "description": "For manual webhook HMAC validation. If set, overrides the Client Secret for OAuth stores.",
    "fieldname": "shared_secret",
    "fieldtype": "Data",
-   "label": "Shared Secret"
+   "label": "Shared Secret (Manual Override)"
   },
   {
    "fieldname": "section_break_erpnext",
@@ -513,7 +513,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-22 16:00:00.000000",
+ "modified": "2026-01-22 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
