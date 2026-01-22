@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.5.1...v1.5.2) (2026-01-22)
+
+
+### Bug Fixes
+
+* **patch:** simplify to only drop old unique index ([cebbd86](https://github.com/one-highflyer/nexwave_shopify_connector/commit/cebbd861731ba243f72efc256dfc9b492b939ffb))
+
 ## [1.5.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.5.0...v1.5.1) (2026-01-22)
 
 
