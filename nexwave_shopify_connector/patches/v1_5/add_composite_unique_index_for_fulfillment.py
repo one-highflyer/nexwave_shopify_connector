@@ -6,30 +6,12 @@ import frappe
 
 def execute():
 	"""
-	Add composite unique index on (shopify_store, shopify_fulfillment_id) for Delivery Note.
+	Remove the unique constraint on shopify_fulfillment_id for Delivery Note.
 
-	This replaces the single-field unique constraint on shopify_fulfillment_id
-	to allow the same fulfillment ID across different stores while preventing
-	duplicates within a single store.
+	Shopify fulfillment IDs are only unique within a store, not globally.
+	The deduplication is handled in code by checking both shopify_store
+	and shopify_fulfillment_id fields.
 	"""
-	# Check if the required columns exist (custom fields may not be installed yet)
-	columns = frappe.db.get_table_columns("tabDelivery Note")
-	if "shopify_store" not in columns or "shopify_fulfillment_id" not in columns:
-		# Custom fields not installed yet, skip this patch
-		# The index will be created on next migrate after fixtures are applied
-		return
-
-	# First, drop the old unique index if it exists
-	old_index_name = "shopify_fulfillment_id"
-	if frappe.db.has_index("tabDelivery Note", old_index_name):
-		frappe.db.sql_ddl(f"ALTER TABLE `tabDelivery Note` DROP INDEX `{old_index_name}`")
-
-	# Create composite unique index
-	index_name = "unique_shopify_store_fulfillment"
-	if not frappe.db.has_index("tabDelivery Note", index_name):
-		frappe.db.sql_ddl(
-			f"""
-			CREATE UNIQUE INDEX `{index_name}`
-			ON `tabDelivery Note` (`shopify_store`, `shopify_fulfillment_id`)
-			"""
-		)
+	# Drop the old unique index if it exists
+	if frappe.db.has_index("tabDelivery Note", "shopify_fulfillment_id"):
+		frappe.db.sql_ddl("ALTER TABLE `tabDelivery Note` DROP INDEX `shopify_fulfillment_id`")
