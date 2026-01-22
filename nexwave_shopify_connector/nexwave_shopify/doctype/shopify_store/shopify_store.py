@@ -8,7 +8,12 @@ from shopify.api_version import ApiVersion
 from shopify.resources import CustomCollection, Location, Shop, SmartCollection
 from shopify.session import Session
 
-from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION, get_access_token
+from nexwave_shopify_connector.nexwave_shopify.connection import (
+	DEFAULT_API_VERSION,
+	WEBHOOK_EVENT_FLAGS,
+	WEBHOOK_EVENTS,
+	get_access_token,
+)
 from nexwave_shopify_connector.nexwave_shopify.oauth import get_callback_url
 from nexwave_shopify_connector.utils.logger import get_logger
 
@@ -407,6 +412,15 @@ class ShopifyStore(Document):
 			indicator="green" if result["errors"] == 0 else "orange",
 		)
 
+	def get_expected_webhook_topics(self) -> list[str]:
+		"""
+		Get the list of webhook topics that should be registered based on store settings.
+
+		Returns:
+			List of webhook topic strings that are enabled for this store.
+		"""
+		return [event for event in WEBHOOK_EVENTS if getattr(self, WEBHOOK_EVENT_FLAGS.get(event, ""), True)]
+
 	@frappe.whitelist()
 	def register_webhooks(self):
 		"""
@@ -426,21 +440,74 @@ class ShopifyStore(Document):
 		try:
 			webhooks = register_webhooks(self)
 			webhook_topics = [w.topic for w in webhooks]
+			expected_topics = self.get_expected_webhook_topics()
 
-			logger.info(
-				"Successfully registered %s webhook(s) for store %s: %s",
-				len(webhooks),
-				self.shop_domain,
-				webhook_topics,
-			)
+			# Determine missing topics
+			missing_topics = [t for t in expected_topics if t not in webhook_topics]
 
-			frappe.msgprint(
-				_("Registered {0} webhook(s) with Shopify:").format(len(webhooks))
-				+ "<br><br>"
-				+ "<br>".join(f"• {topic}" for topic in webhook_topics),
-				title=_("Webhooks Registered"),
-				indicator="green",
-			)
+			if missing_topics:
+				logger.warning(
+					"Partial webhook registration for store %s: missing topics %s",
+					self.shop_domain,
+					missing_topics,
+				)
+
+			if len(webhook_topics) == len(expected_topics) and not missing_topics:
+				# Full success
+				logger.info(
+					"Successfully registered %s webhook(s) for store %s: %s",
+					len(webhooks),
+					self.shop_domain,
+					webhook_topics,
+				)
+				frappe.msgprint(
+					_("Registered {0} webhook(s) with Shopify:").format(len(webhooks))
+					+ "<br><br>"
+					+ "<br>".join(f"• {topic}" for topic in webhook_topics),
+					title=_("Webhooks Registered"),
+					indicator="green",
+				)
+			elif len(webhook_topics) == 0:
+				# Complete failure
+				logger.error(
+					"Failed to register any webhooks for store %s: expected %s",
+					self.shop_domain,
+					expected_topics,
+				)
+				frappe.msgprint(
+					_("Failed to register any webhooks with Shopify.")
+					+ "<br><br>"
+					+ _("<b>Expected:</b>")
+					+ "<br>"
+					+ "<br>".join(f"• {topic}" for topic in expected_topics)
+					+ "<br><br>"
+					+ _("Check NexWave Shopify Log for error details."),
+					title=_("Webhook Registration Failed"),
+					indicator="red",
+				)
+			else:
+				# Partial success
+				logger.warning(
+					"Partially registered webhooks for store %s: registered %s, missing %s",
+					self.shop_domain,
+					webhook_topics,
+					missing_topics,
+				)
+				frappe.msgprint(
+					_("Partially registered webhooks with Shopify.")
+					+ "<br><br>"
+					+ _("<b>Registered ({0}):</b>").format(len(webhook_topics))
+					+ "<br>"
+					+ "<br>".join(f"• {topic}" for topic in webhook_topics)
+					+ "<br><br>"
+					+ _("<b>Missing ({0}):</b>").format(len(missing_topics))
+					+ "<br>"
+					+ "<br>".join(f"• {topic}" for topic in missing_topics)
+					+ "<br><br>"
+					+ _("Check NexWave Shopify Log for error details."),
+					title=_("Webhook Registration Incomplete"),
+					indicator="orange",
+				)
 
 		except Exception as e:
 			logger.error(
@@ -483,9 +550,7 @@ class ShopifyStore(Document):
 				# Filter to webhooks for this site
 				url = get_current_domain_name()
 				site_webhooks = [
-					{"topic": w.topic, "id": w.id, "address": w.address}
-					for w in webhooks
-					if url in w.address
+					{"topic": w.topic, "id": w.id, "address": w.address} for w in webhooks if url in w.address
 				]
 
 				logger.info(

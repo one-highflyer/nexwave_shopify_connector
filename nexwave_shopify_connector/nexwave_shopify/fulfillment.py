@@ -163,10 +163,10 @@ def create_delivery_notes_from_fulfillments(order: dict, store) -> dict:
 	for fulfillment in fulfillments:
 		fulfillment_id = cstr(fulfillment.get("id"))
 
-		# Check if DN already exists for this fulfillment (deduplication)
+		# Check if DN already exists for this fulfillment (deduplication, store-scoped)
 		existing_dn = frappe.db.get_value(
 			"Delivery Note",
-			{"shopify_fulfillment_id": fulfillment_id},
+			{"shopify_fulfillment_id": fulfillment_id, "shopify_store": store.name},
 			"name",
 		)
 
