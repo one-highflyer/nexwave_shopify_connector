@@ -1,3 +1,10 @@
+## [1.5.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.5.2...v1.5.3) (2026-01-22)
+
+
+### Bug Fixes
+
+* **webhooks:** use client_secret for OAuth webhook HMAC validation ([fb356f3](https://github.com/one-highflyer/nexwave_shopify_connector/commit/fb356f3a7441ff403de473ba70c05b250b890782))
+
 ## [1.5.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.5.1...v1.5.2) (2026-01-22)
 
 
