@@ -1,3 +1,16 @@
+# [1.5.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.4.0...v1.5.0) (2026-01-22)
+
+
+### Bug Fixes
+
+* **fulfillment:** scope fulfillment ID uniqueness per store ([652cdc3](https://github.com/one-highflyer/nexwave_shopify_connector/commit/652cdc3a100de7e91a83a3bbd1c261b29e3c8c01))
+
+
+### Features
+
+* **fulfillment:** add fulfillment sync to create Delivery Notes from Shopify webhooks ([74d4a08](https://github.com/one-highflyer/nexwave_shopify_connector/commit/74d4a08051e7132100cb9e3099cfe173a471ffa3))
+* **webhooks:** add configurable webhook event processing ([b7b8aa3](https://github.com/one-highflyer/nexwave_shopify_connector/commit/b7b8aa38289cc319bc7672cc991d7d6fa491742a))
+
 # [1.4.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.3.1...v1.4.0) (2026-01-21)
 
 
