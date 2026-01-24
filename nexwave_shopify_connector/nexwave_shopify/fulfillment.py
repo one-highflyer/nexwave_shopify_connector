@@ -29,7 +29,10 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 	frappe.flags.request_id = request_id
 
 	# Set user context for permission checks (webhook runs as Guest)
-	frappe.set_user("Administrator")
+	if frappe.session.user == "Guest":
+		frappe.set_user("Administrator")
+	else:
+		logger.info("Running as user %s, skipping elevation to Administrator", frappe.session.user)
 
 	store = frappe.get_doc("Shopify Store", shopify_store)
 
