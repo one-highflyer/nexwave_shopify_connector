@@ -12,6 +12,8 @@ from shopify.collection import PaginatedIterator
 from shopify.resources import Order
 from shopify.session import Session
 
+from erpnext.accounts.utils import get_currency_precision
+
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 from nexwave_shopify_connector.utils.logger import get_logger
@@ -1179,20 +1181,40 @@ def _get_order_items(order: dict, store) -> list:
 
 
 def _get_item_price(line_item: dict, taxes_inclusive: bool) -> float:
-	"""Calculate item price, handling discounts and tax-inclusive pricing."""
+	"""Calculate item price, handling discounts and tax-inclusive pricing.
+
+	Calculates the line-level amount first to match Shopify's calculation,
+	then derives the rate with high precision to minimize rounding errors.
+
+	Uses the system's currency precision setting to round line amounts correctly
+	for different currencies (e.g., 0 for JPY, 3 for KWD, 2 for most others).
+	"""
 	price = flt(line_item.get("price"))
 	qty = cint(line_item.get("quantity")) or 1
 
 	# Remove line item level discounts
 	total_discount = _get_total_discount(line_item)
 
+	# Get currency precision from system settings (defaults to 2 if not configured)
+	precision = get_currency_precision() or 2
+
+	# NOTE: We calculate the line amount first, then derive the per-unit rate.
+	# This avoids rounding errors that occur when dividing tax/discount by quantity first.
+	# For example, if tax is $10.00 for qty 3, dividing first gives $3.333... per unit,
+	# which when multiplied back (3.33 * 3 = 9.99) causes cumulative cent discrepancies.
+	# By computing the line amount first (rounded to currency precision to match Shopify),
+	# then deriving the rate with high precision, ERPNext's rate * qty reproduces the
+	# exact line amount Shopify calculated.
+
 	if not taxes_inclusive:
-		return price - (total_discount / qty)
+		line_amount = flt(price * qty - total_discount, precision)
+		return flt(line_amount / qty, 9)
 
 	# For tax-inclusive pricing, subtract taxes
 	total_taxes = sum(flt(tax.get("price")) for tax in line_item.get("tax_lines", []))
 
-	return price - (total_taxes + total_discount) / qty
+	line_amount = flt(price * qty - total_taxes - total_discount, precision)
+	return flt(line_amount / qty, 9)
 
 
 def _get_total_discount(line_item: dict) -> float:
