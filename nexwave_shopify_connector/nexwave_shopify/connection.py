@@ -160,6 +160,9 @@ def get_shopify_store_by_domain(shop_domain: str) -> str | None:
 	"""
 	Get Shopify Store name by domain.
 
+	Looks up by shop_domain first, then falls back to shop_domain_alias
+	to handle stores with multiple .myshopify.com domains (e.g., renamed or migrated stores).
+
 	Args:
 		shop_domain: Shopify shop domain (will be normalized)
 
@@ -167,7 +170,14 @@ def get_shopify_store_by_domain(shop_domain: str) -> str | None:
 		Store name if found, None otherwise
 	"""
 	normalized_domain = normalize_shop_domain(shop_domain)
-	return frappe.db.get_value("Shopify Store", {"shop_domain": normalized_domain})
+
+	# Primary lookup by shop_domain
+	store_name = frappe.db.get_value("Shopify Store", {"shop_domain": normalized_domain})
+	if store_name:
+		return store_name
+
+	# Fallback lookup by shop_domain_alias
+	return frappe.db.get_value("Shopify Store", {"shop_domain_alias": normalized_domain})
 
 
 def normalize_shop_domain(domain: str) -> str:

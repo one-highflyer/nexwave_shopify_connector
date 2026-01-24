@@ -92,6 +92,8 @@ class ShopifyStore(Document):
 	# end: auto-generated types
 	def validate(self):
 		self.normalize_shop_domain()
+		self.normalize_shop_domain_alias()
+		self.validate_shop_domain_alias()
 		self.validate_auth_method()
 		self.validate_payment_method_mapping()
 
@@ -109,6 +111,46 @@ class ShopifyStore(Document):
 			if domain.endswith("/admin"):
 				domain = domain[:-6]
 			self.shop_domain = domain
+
+	def normalize_shop_domain_alias(self):
+		"""Normalize shop domain alias using same logic as shop_domain."""
+		if self.shop_domain_alias:
+			domain = self.shop_domain_alias.strip()
+			# Remove protocol
+			for prefix in ["https://", "http://"]:
+				if domain.startswith(prefix):
+					domain = domain[len(prefix) :]
+			# Remove trailing slash
+			domain = domain.rstrip("/")
+			# Remove /admin suffix
+			if domain.endswith("/admin"):
+				domain = domain[:-6]
+			self.shop_domain_alias = domain
+
+	def validate_shop_domain_alias(self):
+		"""Validate that shop_domain_alias is unique across all stores."""
+		if not self.shop_domain_alias:
+			return
+
+		# Cannot be same as own shop_domain
+		if self.shop_domain_alias == self.shop_domain:
+			frappe.throw(_("Shop Domain Alias cannot be the same as Shop Domain"))
+
+		# Check not used as shop_domain in another store
+		existing = frappe.db.get_value(
+			"Shopify Store",
+			{"shop_domain": self.shop_domain_alias, "name": ["!=", self.name]},
+		)
+		if existing:
+			frappe.throw(_("This alias is already used as Shop Domain in store: {0}").format(existing))
+
+		# Check not used as alias in another store
+		existing = frappe.db.get_value(
+			"Shopify Store",
+			{"shop_domain_alias": self.shop_domain_alias, "name": ["!=", self.name]},
+		)
+		if existing:
+			frappe.throw(_("This alias is already used in store: {0}").format(existing))
 
 	def validate_auth_method(self):
 		"""Validate and clean up fields based on authentication method."""
