@@ -67,6 +67,7 @@
   "default_shipping_charges_account",
   "tax_accounts",
   "webhooks_section",
+  "shop_domain_alias",
   "enable_webhook_orders_create",
   "enable_webhook_orders_paid",
   "enable_webhook_orders_cancelled",
@@ -459,6 +460,12 @@
    "label": "Webhook Events"
   },
   {
+   "description": "Alternate .myshopify.com domain for webhook routing (e.g., if store was renamed or migrated)",
+   "fieldname": "shop_domain_alias",
+   "fieldtype": "Data",
+   "label": "Shop Domain Alias"
+  },
+  {
    "default": "1",
    "description": "Process orders/create webhook events",
    "fieldname": "enable_webhook_orders_create",
@@ -513,7 +520,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-01-22 21:00:00.000000",
+ "modified": "2026-01-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",
