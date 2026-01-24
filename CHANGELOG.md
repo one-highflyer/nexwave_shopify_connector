@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.6.1...v1.6.2) (2026-01-24)
+
+
+### Bug Fixes
+
+* **order:** correct rounding errors in tax-inclusive item pricing ([4eb54db](https://github.com/one-highflyer/nexwave_shopify_connector/commit/4eb54dbfac2fa77dab2d94018f00d5429f5c7ef3))
+
 ## [1.6.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.6.0...v1.6.1) (2026-01-24)
 
 
