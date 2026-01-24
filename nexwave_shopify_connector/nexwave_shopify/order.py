@@ -116,9 +116,11 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 	)
 	frappe.flags.request_id = request_id
 
-
 	# Set user context for permission checks (webhook runs as Guest)
-	frappe.set_user("Administrator")
+	if frappe.session.user == "Guest":
+		frappe.set_user("Administrator")
+	else:
+		logger.info("[orders/create] Running as user %s, skipping elevation to Administrator", frappe.session.user)
 
 	store = frappe.get_doc("Shopify Store", shopify_store)
 	logger.info(
@@ -202,8 +204,10 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 	frappe.flags.request_id = request_id
 
 	# Set user context for permission checks (webhook runs as Guest)
-	frappe.set_user("Administrator")
-
+	if frappe.session.user == "Guest":
+		frappe.set_user("Administrator")
+	else:
+		logger.info("[orders/paid] Running as user %s, skipping elevation to Administrator", frappe.session.user)
 
 	order = payload
 	logger.info(
@@ -323,7 +327,10 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 	"""
 	logger = get_logger()
 	# Set user context for permission checks (webhook runs as Guest)
-	frappe.set_user("Administrator")
+	if frappe.session.user == "Guest":
+		frappe.set_user("Administrator")
+	else:
+		logger.info("[orders/cancelled] Running as user %s, skipping elevation to Administrator", frappe.session.user)
 
 	frappe.flags.request_id = request_id
 
@@ -447,7 +454,11 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 		Dict with counts: {"synced": n, "skipped": n, "errors": n}
 	"""
 	logger = get_logger()
-	frappe.set_user("Administrator")
+	# Set user context for permission checks (manual sync may run as authenticated user)
+	if frappe.session.user == "Guest":
+		frappe.set_user("Administrator")
+	else:
+		logger.info("Running order sync as user %s, skipping elevation to Administrator", frappe.session.user)
 	store = frappe.get_doc("Shopify Store", shopify_store)
 
 	# Determine sync window
