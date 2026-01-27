@@ -276,6 +276,7 @@ def _create_delivery_note_from_fulfillment(
 	dn.shopify_order_id = shopify_order_id
 	dn.shopify_order_number = order.get("name")
 	dn.shopify_fulfillment_id = fulfillment_id
+	dn.shopify_customer_note = order.get("note")
 
 	# Set naming series if configured
 	if store.delivery_note_series:

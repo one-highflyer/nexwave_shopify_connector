@@ -20,24 +20,30 @@ fixtures = [
 				"Item-shopify_stores_section",
 				"Item-shopify_stores",
 				# Customer fields
-				"Customer-shopify_customer_section",
 				"Customer-shopify_customer_id",
 				# Sales Order fields
 				"Sales Order-shopify_section",
 				"Sales Order-shopify_store",
 				"Sales Order-shopify_order_id",
 				"Sales Order-shopify_order_number",
+				"Sales Order-shopify_financial_status",
+				"Sales Order-shopify_fulfillment_status",
+				"Sales Order-shopify_customer_note",
+				# Sales Order Item fields
+				"Sales Order Item-shopify_item_discount",
 				# Delivery Note fields
 				"Delivery Note-shopify_section",
 				"Delivery Note-shopify_store",
 				"Delivery Note-shopify_order_id",
 				"Delivery Note-shopify_order_number",
 				"Delivery Note-shopify_fulfillment_id",
+				"Delivery Note-shopify_customer_note",
 				# Sales Invoice fields
 				"Sales Invoice-shopify_section",
 				"Sales Invoice-shopify_store",
 				"Sales Invoice-shopify_order_id",
 				"Sales Invoice-shopify_order_number",
+				"Sales Invoice-shopify_customer_note",
 			]]
 		]
 	}

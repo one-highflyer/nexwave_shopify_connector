@@ -1091,6 +1091,7 @@ def _create_sales_order(
 			"shopify_order_number": order.get("name"),
 			"shopify_financial_status": order.get("financial_status"),
 			"shopify_fulfillment_status": order.get("fulfillment_status") or "unfulfilled",
+			"shopify_customer_note": order.get("note"),
 			"customer": customer_name,
 			"contact_person": contact_name,
 			"customer_address": billing_address,
@@ -1108,10 +1109,6 @@ def _create_sales_order(
 
 	so.flags.ignore_mandatory = True
 	so.insert(ignore_permissions=True)
-
-	# Add order note as comment
-	if order.get("note"):
-		so.add_comment(text=f"Order Note: {order.get('note')}")
 
 	return so
 
@@ -1382,6 +1379,7 @@ def _create_sales_invoice(so, order: dict, store) -> "Document | None":
 	si.shopify_store = store.name
 	si.shopify_order_id = cstr(order.get("id"))
 	si.shopify_order_number = order.get("name")
+	si.shopify_customer_note = order.get("note")
 	si.set_posting_time = 1
 	si.posting_date = posting_date
 	si.due_date = posting_date

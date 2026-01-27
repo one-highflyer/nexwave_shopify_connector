@@ -125,6 +125,16 @@
 	},
 	{
 		"doctype": "Custom Field",
+		"name": "Delivery Note-shopify_customer_note",
+		"dt": "Delivery Note",
+		"fieldname": "shopify_customer_note",
+		"fieldtype": "Small Text",
+		"insert_after": "shopify_fulfillment_id",
+		"label": "Shopify Customer Note",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
 		"name": "Sales Invoice-shopify_section",
 		"dt": "Sales Invoice",
 		"fieldname": "shopify_section",
@@ -167,6 +177,16 @@
 	},
 	{
 		"doctype": "Custom Field",
+		"name": "Sales Invoice-shopify_customer_note",
+		"dt": "Sales Invoice",
+		"fieldname": "shopify_customer_note",
+		"fieldtype": "Small Text",
+		"insert_after": "shopify_order_number",
+		"label": "Shopify Customer Note",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
 		"name": "Sales Order-shopify_financial_status",
 		"dt": "Sales Order",
 		"fieldname": "shopify_financial_status",
@@ -185,6 +205,16 @@
 		"insert_after": "shopify_financial_status",
 		"label": "Shopify Fulfillment Status",
 		"options": "\nfulfilled\nnot_eligible\npartial\nunfulfilled",
+		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Sales Order-shopify_customer_note",
+		"dt": "Sales Order",
+		"fieldname": "shopify_customer_note",
+		"fieldtype": "Small Text",
+		"insert_after": "shopify_fulfillment_status",
+		"label": "Shopify Customer Note",
 		"read_only": 1
 	},
 	{
