@@ -1,3 +1,11 @@
+# [1.7.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.6.2...v1.7.0) (2026-01-27)
+
+
+### Features
+
+* **order:** add shopify_customer_note field for customer delivery notes ([e41b4ba](https://github.com/one-highflyer/nexwave_shopify_connector/commit/e41b4ba15bd126c5862ff5c180f9566850cf5a01))
+* **order:** auto-create delivery notes for pre-fulfilled orders ([eae60a8](https://github.com/one-highflyer/nexwave_shopify_connector/commit/eae60a80e2a05a8a43073a97086d0fb36ea7a753))
+
 ## [1.6.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.6.1...v1.6.2) (2026-01-24)
 
 
