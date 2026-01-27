@@ -5,6 +5,7 @@ from typing import Optional
 
 import frappe
 import pytz
+from erpnext.accounts.utils import get_currency_precision
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_days, cint, cstr, flt, get_datetime, get_system_timezone, getdate, now, nowdate
@@ -12,9 +13,8 @@ from shopify.collection import PaginatedIterator
 from shopify.resources import Order
 from shopify.session import Session
 
-from erpnext.accounts.utils import get_currency_precision
-
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
+from nexwave_shopify_connector.nexwave_shopify.fulfillment import create_delivery_notes_from_fulfillments
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 from nexwave_shopify_connector.utils.logger import get_logger
 
@@ -80,7 +80,38 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 				_create_payment_entries(si, order, store, getdate(order.get("created_at")))
 				logger.info("Payment Entry created for Shopify Order ID: %s", order.get("id"))
 
-	logger.info("Sales Order created: %s for Shopify Order ID: %s", so.name, order.get("id"))
+		# Auto-create Delivery Notes if order is already fulfilled
+		if store.enable_webhook_fulfillment and order.get("fulfillment_status") == "fulfilled":
+			try:
+				result = create_delivery_notes_from_fulfillments(order, store)
+				if result.get("created"):
+					logger.info(
+						"Auto-created Delivery Notes for pre-fulfilled order %s: %s",
+						order.get("id"),
+						result["created"],
+					)
+				else:
+					logger.warning(
+						"Failed to auto-create Delivery Notes for pre-fulfilled order %s: %s",
+						order.get("id"),
+						result.get("message"),
+					)
+			except Exception as e:
+				logger.error(
+					"Failed to auto-create Delivery Notes for order %s: %s",
+					order.get("id"),
+					str(e),
+					exc_info=True,
+				)
+				create_shopify_log(
+					status="Error",
+					message=f"Failed to auto-create Delivery Notes for pre-fulfilled order: {str(e)}",
+					exception=frappe.get_traceback(),
+					shopify_store=store.name,
+					reference_doctype="Sales Order",
+					reference_name=so.name,
+				)
+
 	return so.name
 
 
@@ -122,7 +153,9 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 	if frappe.session.user == "Guest":
 		frappe.set_user("Administrator")
 	else:
-		logger.info("[orders/create] Running as user %s, skipping elevation to Administrator", frappe.session.user)
+		logger.info(
+			"[orders/create] Running as user %s, skipping elevation to Administrator", frappe.session.user
+		)
 
 	store = frappe.get_doc("Shopify Store", shopify_store)
 	logger.info(
@@ -209,7 +242,9 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 	if frappe.session.user == "Guest":
 		frappe.set_user("Administrator")
 	else:
-		logger.info("[orders/paid] Running as user %s, skipping elevation to Administrator", frappe.session.user)
+		logger.info(
+			"[orders/paid] Running as user %s, skipping elevation to Administrator", frappe.session.user
+		)
 
 	order = payload
 	logger.info(
@@ -285,7 +320,9 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 		elif not store.auto_create_invoice:
 			logger.info("[orders/paid] auto_create_invoice is disabled, skipping invoice creation")
 		elif so.docstatus != 1:
-			logger.info("[orders/paid] SO %s not submitted (docstatus=%s), skipping invoice", so.name, so.docstatus)
+			logger.info(
+				"[orders/paid] SO %s not submitted (docstatus=%s), skipping invoice", so.name, so.docstatus
+			)
 		elif so.per_billed:
 			logger.info("[orders/paid] SO %s already billed (%s%%), skipping invoice", so.name, so.per_billed)
 
@@ -332,7 +369,9 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 	if frappe.session.user == "Guest":
 		frappe.set_user("Administrator")
 	else:
-		logger.info("[orders/cancelled] Running as user %s, skipping elevation to Administrator", frappe.session.user)
+		logger.info(
+			"[orders/cancelled] Running as user %s, skipping elevation to Administrator", frappe.session.user
+		)
 
 	frappe.flags.request_id = request_id
 
@@ -388,7 +427,9 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 		# Update status on linked docs
 		if sales_invoice:
 			frappe.db.set_value("Sales Invoice", sales_invoice, "shopify_financial_status", order_status)
-			logger.info("[orders/cancelled] Updated SI %s financial status to '%s'", sales_invoice, order_status)
+			logger.info(
+				"[orders/cancelled] Updated SI %s financial status to '%s'", sales_invoice, order_status
+			)
 
 		for dn in delivery_notes:
 			frappe.db.set_value("Delivery Note", dn.name, "shopify_financial_status", order_status)
@@ -411,7 +452,9 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 				order_status,
 			)
 
-		logger.info("[orders/cancelled] Successfully processed cancellation for order %s -> SO %s", order_id, so.name)
+		logger.info(
+			"[orders/cancelled] Successfully processed cancellation for order %s -> SO %s", order_id, so.name
+		)
 
 		create_shopify_log(
 			status="Success",
