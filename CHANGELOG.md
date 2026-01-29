@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.7.0...v1.8.0) (2026-01-29)
+
+
+### Features
+
+* **hooks:** exclude Shopify Store from company deletion cascade ([9ab0272](https://github.com/one-highflyer/nexwave_shopify_connector/commit/9ab0272742f5171b11188373437ad40b18acb325))
+
 # [1.7.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.6.2...v1.7.0) (2026-01-27)
 
 
