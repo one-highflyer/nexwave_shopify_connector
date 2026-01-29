@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.8.0...v1.8.1) (2026-01-29)
+
+
+### Bug Fixes
+
+* **webhooks:** skip webhook processing for disabled stores ([d88fdd4](https://github.com/one-highflyer/nexwave_shopify_connector/commit/d88fdd4c04a639e683ab1e7a73faadd9d2ae8b06))
+
 # [1.8.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.7.0...v1.8.0) (2026-01-29)
 
 
