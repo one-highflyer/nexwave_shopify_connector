@@ -262,3 +262,7 @@ export_python_type_annotations = True
 default_log_clearing_doctypes = {
 	"NexWave Shopify Log": 30  # days to retain logs
 }
+
+# Doctypes to exclude from deletion when a Company is deleted
+# -----------------------------------------------------------
+company_data_to_be_ignored = ["Shopify Store"]
