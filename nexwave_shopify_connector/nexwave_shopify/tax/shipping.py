@@ -53,6 +53,7 @@ class ShippingTaxHandler:
 		shipping_lines = self.order.get("shipping_lines", [])
 		taxes_inclusive = self.order.get("taxes_included", False)
 		delivery_date = self.items[-1]["delivery_date"] if self.items else nowdate()
+		running_row_count = self.current_tax_row_count
 
 		for shipping in shipping_lines:
 			if not shipping.get("price"):
@@ -74,8 +75,9 @@ class ShippingTaxHandler:
 				self._add_shipping_item(shipping, shipping_amount, delivery_date)
 			else:
 				# Add shipping as tax row + GST on shipping
-				shipping_rows = self._add_shipping_tax_rows(shipping, shipping_amount)
+				shipping_rows = self._add_shipping_tax_rows(shipping, shipping_amount, running_row_count)
 				tax_rows.extend(shipping_rows)
+				running_row_count += len(shipping_rows)
 
 		return tax_rows
 
@@ -128,7 +130,7 @@ class ShippingTaxHandler:
 		)
 		self.logger.info("Added shipping as item: %s (amount: %s)", self.store.shipping_item, amount)
 
-	def _add_shipping_tax_rows(self, shipping: dict, amount: float) -> list[dict]:
+	def _add_shipping_tax_rows(self, shipping: dict, amount: float, running_row_count: int) -> list[dict]:
 		"""
 		Add shipping as tax rows with GST on shipping.
 
@@ -139,6 +141,7 @@ class ShippingTaxHandler:
 		Args:
 		    shipping: Shopify shipping_line dict
 		    amount: Net shipping amount
+		    running_row_count: Current count of tax rows (for correct row_id calculation)
 
 		Returns:
 		    List of tax row dicts
@@ -162,7 +165,7 @@ class ShippingTaxHandler:
 		if shipping_taxes:
 			# Calculate the row_id for the shipping row we just added
 			# row_id is 1-indexed in ERPNext
-			shipping_row_id = self.current_tax_row_count + len(rows)
+			shipping_row_id = running_row_count + len(rows)
 
 			for tax in shipping_taxes:
 				tax_account = self._get_tax_account(tax.get("title"))

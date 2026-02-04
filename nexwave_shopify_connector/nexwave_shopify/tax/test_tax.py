@@ -284,21 +284,26 @@ class TestShippingTaxHandler(FrappeTestCase):
 		# Should have 4 rows: 2 shipping charges + 2 GST on shipping
 		self.assertEqual(len(tax_rows), 4)
 
-		# Verify all charge types
-		actual_rows = [r for r in tax_rows if r["charge_type"] == "Actual"]
-		on_prev_rows = [r for r in tax_rows if r["charge_type"] == "On Previous Row Amount"]
+		# Verify row structure:
+		# Row 0: Standard Shipping (Actual)
+		# Row 1: GST on Standard Shipping (On Previous Row Amount, row_id=2)
+		# Row 2: Express Handling (Actual)
+		# Row 3: GST on Express Handling (On Previous Row Amount, row_id=4)
+		self.assertEqual(tax_rows[0]["charge_type"], "Actual")
+		self.assertEqual(tax_rows[0]["description"], "Standard Shipping")
 
-		self.assertEqual(len(actual_rows), 2)  # 2 shipping charges
-		self.assertEqual(len(on_prev_rows), 2)  # 2 GST on shipping
+		self.assertEqual(tax_rows[1]["charge_type"], "On Previous Row Amount")
+		self.assertEqual(tax_rows[1]["row_id"], 2)  # References row 2 (first shipping)
 
-		# Verify each shipping row has a description (title from shipping line)
-		for row in actual_rows:
-			self.assertIsNotNone(row.get("description"))
+		self.assertEqual(tax_rows[2]["charge_type"], "Actual")
+		self.assertEqual(tax_rows[2]["description"], "Express Handling")
 
-		# Verify each GST row references its corresponding shipping row
-		for row in on_prev_rows:
-			self.assertEqual(row["rate"], 15.0)
-			self.assertIn("row_id", row)
+		self.assertEqual(tax_rows[3]["charge_type"], "On Previous Row Amount")
+		self.assertEqual(tax_rows[3]["row_id"], 4)  # References row 4 (second shipping)
+
+		# Verify GST rates
+		self.assertEqual(tax_rows[1]["rate"], 15.0)
+		self.assertEqual(tax_rows[3]["rate"], 15.0)
 
 
 class TestTaxBuilder(FrappeTestCase):
