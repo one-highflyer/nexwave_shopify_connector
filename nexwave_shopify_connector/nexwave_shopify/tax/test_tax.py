@@ -256,6 +256,50 @@ class TestShippingTaxHandler(FrappeTestCase):
 
 		self.assertEqual(len(tax_rows), 0)
 
+	def test_multiple_shipping_lines(self):
+		"""Test handling of orders with multiple shipping methods."""
+		from nexwave_shopify_connector.nexwave_shopify.tax.shipping import ShippingTaxHandler
+
+		order = create_test_shopify_order(
+			shipping_lines=[
+				{
+					"price": "10.00",
+					"title": "Standard Shipping",
+					"tax_lines": [{"title": "GST", "rate": 0.15, "price": "1.50"}],
+				},
+				{
+					"price": "5.00",
+					"title": "Express Handling",
+					"tax_lines": [{"title": "GST", "rate": 0.15, "price": "0.75"}],
+				},
+			]
+		)
+		store = get_test_store()
+		store.add_shipping_as_item = False
+		items = [{"delivery_date": "2026-02-03"}]
+
+		handler = ShippingTaxHandler(store, items, order, current_tax_row_count=1)
+		tax_rows = handler.build()
+
+		# Should have 4 rows: 2 shipping charges + 2 GST on shipping
+		self.assertEqual(len(tax_rows), 4)
+
+		# Verify all charge types
+		actual_rows = [r for r in tax_rows if r["charge_type"] == "Actual"]
+		on_prev_rows = [r for r in tax_rows if r["charge_type"] == "On Previous Row Amount"]
+
+		self.assertEqual(len(actual_rows), 2)  # 2 shipping charges
+		self.assertEqual(len(on_prev_rows), 2)  # 2 GST on shipping
+
+		# Verify each shipping row has a description (title from shipping line)
+		for row in actual_rows:
+			self.assertIsNotNone(row.get("description"))
+
+		# Verify each GST row references its corresponding shipping row
+		for row in on_prev_rows:
+			self.assertEqual(row["rate"], 15.0)
+			self.assertIn("row_id", row)
+
 
 class TestTaxBuilder(FrappeTestCase):
 	"""Tests for TaxBuilder class - main orchestrator."""
@@ -723,36 +767,6 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 
 		frappe.db.commit()
 
-	def test_taxable_item_gets_template(self):
-		"""Taxable items get taxable_item_tax_template when configured."""
-		from nexwave_shopify_connector.nexwave_shopify.tax.builder import TaxBuilder
-
-		order = create_test_shopify_order(
-			line_items=[
-				{
-					"sku": "TAXABLE-001",
-					"taxable": True,
-					"tax_lines": [{"title": "GST", "rate": 0.15, "price": "1.50"}],
-				},
-			],
-			shipping_lines=[],
-		)
-		store = get_test_store()
-
-		# Configure the store with taxable_item_tax_template
-		if store.tax_accounts:
-			store.tax_accounts[0].taxable_item_tax_template = self.gst15_template
-			store.tax_accounts[0].zero_rated_item_tax_template = None
-
-		items = [{"item_code": "TAXABLE-001", "delivery_date": "2026-02-03"}]
-
-		builder = TaxBuilder(order, store, items)
-		builder.build()
-
-		# Verify item_tax_template is set
-		self.assertEqual(items[0].get("item_tax_template"), self.gst15_template)
-		self.assertNotIn("item_tax_rate", items[0])
-
 	def test_zero_rated_item_gets_template(self):
 		"""Zero-rated items get zero_rated_item_tax_template when configured."""
 		from nexwave_shopify_connector.nexwave_shopify.tax.builder import TaxBuilder
@@ -780,7 +794,6 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		)
 
 		if store.tax_accounts:
-			store.tax_accounts[0].taxable_item_tax_template = None
 			store.tax_accounts[0].zero_rated_item_tax_template = self.zr_template
 
 		items = [
@@ -811,9 +824,8 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		)
 		store = get_test_store()
 
-		# Ensure NO templates are configured
+		# Ensure NO zero_rated template is configured (fallback scenario)
 		for mapping in store.tax_accounts or []:
-			mapping.taxable_item_tax_template = None
 			mapping.zero_rated_item_tax_template = None
 
 		items = [{"item_code": "ZERO-001", "delivery_date": "2026-02-03"}]
@@ -827,8 +839,8 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		tax_rate = json.loads(items[0]["item_tax_rate"])
 		self.assertEqual(tax_rate[store.default_sales_tax_account], 0)
 
-	def test_taxable_item_no_template_no_override(self):
-		"""Taxable items without template don't get any override."""
+	def test_taxable_item_no_override(self):
+		"""Taxable items don't get any item-level tax override (use SO-level tax)."""
 		from nexwave_shopify_connector.nexwave_shopify.tax.builder import TaxBuilder
 
 		order = create_test_shopify_order(
@@ -843,22 +855,21 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		)
 		store = get_test_store()
 
-		# Ensure NO templates are configured
-		for mapping in store.tax_accounts or []:
-			mapping.taxable_item_tax_template = None
-			mapping.zero_rated_item_tax_template = None
+		# Configure zero_rated template (should not affect taxable items)
+		if store.tax_accounts:
+			store.tax_accounts[0].zero_rated_item_tax_template = self.zr_template
 
 		items = [{"item_code": "TAXABLE-001", "delivery_date": "2026-02-03"}]
 
 		builder = TaxBuilder(order, store, items)
 		builder.build()
 
-		# Verify neither item_tax_template nor item_tax_rate is set
+		# Verify taxable item gets NO item-level override (uses SO-level tax rate)
 		self.assertNotIn("item_tax_template", items[0])
 		self.assertNotIn("item_tax_rate", items[0])
 
-	def test_mixed_order_correct_templates(self):
-		"""Order with both taxable and zero-rated items gets correct templates."""
+	def test_mixed_order_only_zero_rated_gets_template(self):
+		"""In mixed orders, only zero-rated items get item_tax_template."""
 		from nexwave_shopify_connector.nexwave_shopify.tax.builder import TaxBuilder
 
 		order = create_test_shopify_order(
@@ -878,9 +889,8 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		)
 		store = get_test_store()
 
-		# Configure the store with BOTH templates
+		# Configure zero_rated_item_tax_template
 		if store.tax_accounts:
-			store.tax_accounts[0].taxable_item_tax_template = self.gst15_template
 			store.tax_accounts[0].zero_rated_item_tax_template = self.zr_template
 
 		items = [
@@ -891,8 +901,8 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		builder = TaxBuilder(order, store, items)
 		builder.build()
 
-		# Verify taxable item gets GST15 template
-		self.assertEqual(items[0].get("item_tax_template"), self.gst15_template)
+		# Verify taxable item gets NO item-level override (uses SO-level tax rate)
+		self.assertNotIn("item_tax_template", items[0])
 		self.assertNotIn("item_tax_rate", items[0])
 
 		# Verify zero-rated item gets ZR template

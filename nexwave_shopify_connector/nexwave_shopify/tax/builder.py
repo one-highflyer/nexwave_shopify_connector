@@ -76,43 +76,53 @@ class TaxBuilder:
 
 	def _apply_item_tax_templates(self):
 		"""
-		Apply Item Tax Templates or item_tax_rate to items.
+		Apply Item Tax Templates to zero-rated items.
 
-		Priority:
-		1. Use item_tax_template if configured for the item's tax status
-		2. Fall back to item_tax_rate JSON for zero-rated items without template
+		Taxable items don't need item-level templates - they use the default
+		rate from sales_taxes_and_charges_template at the SO level.
 
-		This ensures:
-		- Correct tax calculation in ERPNext
-		- Proper categorization in GST/BAS reports (when using Item Tax Templates)
+		For zero-rated items:
+		1. Use zero_rated_item_tax_template if configured (for GST/BAS reporting)
+		2. Fall back to item_tax_rate JSON if no template configured
 		"""
-		# Get primary tax title from order (first tax type found)
 		primary_tax_title = self._get_primary_tax_title()
 
 		for item in self.items:
 			sku = self._get_original_sku(item)
 			if not sku:
+				self.logger.warning(
+					"Could not find original Shopify SKU for item %s - skipping tax template application",
+					item.get("item_code"),
+				)
 				continue
 
-			# Try to get Item Tax Template
-			template = self.detector.get_item_tax_template(sku, primary_tax_title)
+			# Only process zero-rated items - taxable items use SO-level tax rate
+			if not self.detector.is_zero_rated(sku):
+				continue
 
+			# Try Item Tax Template first (for GST/BAS reporting compliance)
+			template = self.detector.get_item_tax_template(sku, primary_tax_title)
 			if template:
 				item["item_tax_template"] = template
 				self.logger.debug(
-					"Applied item_tax_template '%s' to item %s",
+					"Applied item_tax_template '%s' to zero-rated item %s",
 					template,
 					item.get("item_code"),
 				)
-			elif self.detector.is_zero_rated(sku):
-				# Fallback: use item_tax_rate JSON for zero-rated items
+			else:
+				# Fallback: use item_tax_rate JSON
 				item_tax_rate = self.detector.get_item_tax_rate_json(sku)
 				if item_tax_rate:
 					item["item_tax_rate"] = item_tax_rate
-					self.logger.debug(
-						"Applied item_tax_rate fallback to item %s: %s",
+					self.logger.info(
+						"Using item_tax_rate fallback for zero-rated item %s "
+						"(consider configuring zero_rated_item_tax_template for GST/BAS compliance)",
 						item.get("item_code"),
-						item_tax_rate,
+					)
+				else:
+					self.logger.warning(
+						"Zero-rated item %s has no tax override - may be taxed incorrectly",
+						item.get("item_code"),
 					)
 
 	def _get_primary_tax_title(self) -> str | None:
@@ -296,7 +306,12 @@ class TaxBuilder:
 		if self.store.default_sales_tax_account:
 			return self.store.default_sales_tax_account
 
-		frappe.throw(_("Tax Account not configured for Shopify tax: {0}").format(tax_title))
+		frappe.throw(
+			_("Tax Account not configured for Shopify tax '{0}' in store '{1}'. "
+			  "Configure tax_accounts mapping or set default_sales_tax_account.").format(
+				tax_title, self.store.name
+			)
+		)
 
 	def _process_shipping(self):
 		"""Process shipping charges and add to tax rows."""

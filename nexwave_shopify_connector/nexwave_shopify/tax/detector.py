@@ -71,26 +71,27 @@ class TaxDetector:
 
 	def get_item_tax_template(self, sku: str, tax_title: str) -> str | None:
 		"""
-		Get the appropriate Item Tax Template for an item.
+		Get Item Tax Template for a zero-rated item.
 
-		Returns the configured Item Tax Template based on whether the item
-		is zero-rated or taxable. Used for GST/BAS reporting compliance.
+		Only zero-rated items need an Item Tax Template override.
+		Taxable items use the default rate from sales_taxes_and_charges_template.
 
 		Args:
 		    sku: Item SKU from Shopify
 		    tax_title: Shopify tax title to find the mapping
 
 		Returns:
-		    Item Tax Template name or None if not configured
+		    Item Tax Template name for zero-rated items, None otherwise
 		"""
+		# Only zero-rated items need item-level tax template
+		if not self.is_zero_rated(sku):
+			return None
+
 		mapping = self._find_tax_mapping(tax_title)
 		if not mapping:
 			return None
 
-		if self.is_zero_rated(sku):
-			return mapping.zero_rated_item_tax_template
-		else:
-			return mapping.taxable_item_tax_template
+		return mapping.zero_rated_item_tax_template
 
 	def _find_tax_mapping(self, tax_title: str):
 		"""
@@ -146,11 +147,16 @@ class TaxDetector:
 				if tax_account:
 					self._item_tax_rates[sku] = {tax_account: 0}
 				else:
+					frappe.log_error(
+						title="Shopify Tax Config Error - Zero-Rated Item",
+						message=f"Zero-rated item '{sku}' in order {self.order.get('id')} detected "
+						f"but no tax account configured. The item may be incorrectly taxed. "
+						f"Configure tax_accounts mapping or default_sales_tax_account in Shopify Store settings.",
+					)
 					self.logger.warning(
-						"Zero-rated item '%s' detected but no tax account configured to apply 0%% rate. "
-						"The item may be incorrectly taxed. Configure tax_accounts mapping or "
-						"default_sales_tax_account in Shopify Store settings.",
+						"Zero-rated item '%s' in order %s has no tax account configured - may be taxed incorrectly",
 						sku,
+						self.order.get("id"),
 					)
 
 	def _get_sku(self, line_item: dict) -> str:

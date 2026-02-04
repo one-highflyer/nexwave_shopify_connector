@@ -29,8 +29,8 @@ TEST_SHIPPING_ACCOUNT = "Shipping Charges - _TC"
 TEST_WRITE_OFF_ACCOUNT = "Write Off - _TC"
 TEST_STORE_DOMAIN = "_test-shopify-store.myshopify.com"
 
-# Path to test data files
-DATA_DIR = Path(__file__).parent.parent.parent.parent.parent.parent.parent / "data" / "shopify"
+# Path to test data files (within the tax module)
+DATA_DIR = Path(__file__).parent / "test_data"
 
 
 def setup_tax_test_data(commit: bool = False):

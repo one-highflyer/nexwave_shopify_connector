@@ -1,0 +1,97 @@
+{
+    "id": 1000000000004,
+    "name": "#TEST1004",
+    "currency": "AUD",
+    "email": "test.customer.au@example.com",
+    "contact_email": "test.customer.au@example.com",
+    "taxes_included": true,
+    "tax_exempt": false,
+    "subtotal_price": "169.00",
+    "total_price": "193.95",
+    "total_tax": "17.63",
+    "current_subtotal_price": "169.00",
+    "current_total_price": "193.95",
+    "current_total_tax": "17.63",
+    "total_discounts": "0.00",
+    "total_line_items_price": "169.00",
+    "tax_lines": [
+      {
+        "price": "17.63",
+        "rate": 0.1,
+        "title": "GST",
+        "channel_liable": false
+      }
+    ],
+    "line_items": [
+      {
+        "id": 4001,
+        "sku": "GFD42P09",
+        "name": "Test Australian Product",
+        "title": "Test Australian Product",
+        "price": "169.00",
+        "quantity": 1,
+        "taxable": true,
+        "product_id": 9004,
+        "variant_id": 46004,
+        "tax_lines": [
+          {
+            "channel_liable": false,
+            "price": "15.36",
+            "rate": 0.1,
+            "title": "GST"
+          }
+        ],
+        "discount_allocations": []
+      }
+    ],
+    "shipping_lines": [
+      {
+        "id": 5004,
+        "code": "Standard",
+        "title": "Standard",
+        "price": "24.95",
+        "discounted_price": "24.95",
+        "source": "shopify",
+        "tax_lines": [
+          {
+            "channel_liable": false,
+            "price": "2.27",
+            "rate": 0.1,
+            "title": "GST"
+          }
+        ],
+        "discount_allocations": []
+      }
+    ],
+    "shipping_address": {
+      "first_name": "Test",
+      "last_name": "Customer",
+      "address1": "123 Test Street",
+      "city": "Test City",
+      "province": "Queensland",
+      "country": "Australia",
+      "country_code": "AU",
+      "province_code": "QLD",
+      "zip": "4000"
+    },
+    "billing_address": {
+      "first_name": "Test",
+      "last_name": "Customer",
+      "address1": "123 Test Street",
+      "city": "Test City",
+      "province": "Queensland",
+      "country": "Australia",
+      "country_code": "AU",
+      "province_code": "QLD",
+      "zip": "4000"
+    },
+    "customer": {
+      "id": 8004,
+      "email": "test.customer.au@example.com",
+      "first_name": "Test",
+      "last_name": "Customer"
+    },
+    "discount_applications": [],
+    "fulfillments": [],
+    "refunds": []
+}

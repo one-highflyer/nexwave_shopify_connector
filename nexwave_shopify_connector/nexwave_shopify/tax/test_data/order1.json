@@ -1,0 +1,135 @@
+{
+    "id": 1000000000001,
+    "name": "#TEST1001",
+    "currency": "NZD",
+    "email": "test.customer@example.com",
+    "contact_email": "test.customer@example.com",
+    "taxes_included": true,
+    "tax_exempt": false,
+    "subtotal_price": "524.70",
+    "total_price": "555.75",
+    "total_tax": "72.48",
+    "current_subtotal_price": "524.70",
+    "current_total_price": "555.75",
+    "current_total_tax": "72.48",
+    "total_discounts": "0.00",
+    "total_line_items_price": "524.70",
+    "tax_lines": [
+      {
+        "price": "72.48",
+        "rate": 0.15,
+        "title": "GST",
+        "channel_liable": false
+      }
+    ],
+    "line_items": [
+      {
+        "id": 1001,
+        "sku": "6393",
+        "name": "Test Product A",
+        "title": "Test Product A",
+        "price": "18.12",
+        "quantity": 10,
+        "taxable": true,
+        "product_id": 9001,
+        "variant_id": 46001,
+        "tax_lines": [
+          {
+            "channel_liable": false,
+            "price": "23.63",
+            "rate": 0.15,
+            "title": "GST"
+          }
+        ],
+        "discount_allocations": []
+      },
+      {
+        "id": 1002,
+        "sku": "10701",
+        "name": "Test Product B",
+        "title": "Test Product B",
+        "price": "18.25",
+        "quantity": 8,
+        "taxable": true,
+        "product_id": 9002,
+        "variant_id": 46002,
+        "tax_lines": [
+          {
+            "channel_liable": false,
+            "price": "19.04",
+            "rate": 0.15,
+            "title": "GST"
+          }
+        ],
+        "discount_allocations": []
+      },
+      {
+        "id": 1003,
+        "sku": "7323",
+        "name": "Test Product C",
+        "title": "Test Product C",
+        "price": "19.75",
+        "quantity": 10,
+        "taxable": true,
+        "product_id": 9003,
+        "variant_id": 46003,
+        "tax_lines": [
+          {
+            "channel_liable": false,
+            "price": "25.76",
+            "rate": 0.15,
+            "title": "GST"
+          }
+        ],
+        "discount_allocations": []
+      }
+    ],
+    "shipping_lines": [
+      {
+        "id": 5001,
+        "code": "standard",
+        "title": "Standard Shipping",
+        "price": "31.05",
+        "discounted_price": "31.05",
+        "source": "shopify",
+        "tax_lines": [
+          {
+            "channel_liable": false,
+            "price": "4.05",
+            "rate": 0.15,
+            "title": "GST"
+          }
+        ],
+        "discount_allocations": []
+      }
+    ],
+    "shipping_address": {
+      "first_name": "Test",
+      "last_name": "Customer",
+      "address1": "123 Test Street",
+      "city": "Test City",
+      "province": "Test Province",
+      "country": "New Zealand",
+      "country_code": "NZ",
+      "zip": "1234"
+    },
+    "billing_address": {
+      "first_name": "Test",
+      "last_name": "Customer",
+      "address1": "123 Test Street",
+      "city": "Test City",
+      "province": "Test Province",
+      "country": "New Zealand",
+      "country_code": "NZ",
+      "zip": "1234"
+    },
+    "customer": {
+      "id": 8001,
+      "email": "test.customer@example.com",
+      "first_name": "Test",
+      "last_name": "Customer"
+    },
+    "discount_applications": [],
+    "fulfillments": [],
+    "refunds": []
+}
