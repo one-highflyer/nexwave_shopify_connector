@@ -256,6 +256,30 @@ class TestShippingTaxHandler(FrappeTestCase):
 
 		self.assertEqual(len(tax_rows), 0)
 
+	def test_free_shipping_skipped(self):
+		"""Test that free shipping (price=0) is skipped and no tax row is added."""
+		from nexwave_shopify_connector.nexwave_shopify.tax.shipping import ShippingTaxHandler
+
+		order = create_test_shopify_order(
+			shipping_lines=[
+				{
+					"price": "0.00",
+					"title": "Free Pickup",
+					"tax_lines": [],
+				}
+			]
+		)
+		store = get_test_store()
+		store.add_shipping_as_item = False
+
+		items = [{"delivery_date": "2026-02-03"}]
+
+		handler = ShippingTaxHandler(store, items, order, current_tax_row_count=0)
+		tax_rows = handler.build()
+
+		# Free shipping should not add any tax rows
+		self.assertEqual(len(tax_rows), 0)
+
 	def test_multiple_shipping_lines(self):
 		"""Test handling of orders with multiple shipping methods."""
 		from nexwave_shopify_connector.nexwave_shopify.tax.shipping import ShippingTaxHandler

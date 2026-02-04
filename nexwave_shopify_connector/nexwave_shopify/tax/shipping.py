@@ -56,7 +56,7 @@ class ShippingTaxHandler:
 		running_row_count = self.current_tax_row_count
 
 		for shipping in shipping_lines:
-			if not shipping.get("price"):
+			if not flt(shipping.get("price")):
 				continue
 
 			# Calculate shipping amount (net of discounts and taxes if inclusive)
