@@ -16,7 +16,7 @@ from shopify.session import Session
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
 from nexwave_shopify_connector.nexwave_shopify.fulfillment import create_delivery_notes_from_fulfillments
 from nexwave_shopify_connector.nexwave_shopify.tax import TaxBuilder, apply_rounding_adjustment
-from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
+from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log, sanitize_phone_number
 from nexwave_shopify_connector.utils.logger import get_logger
 
 # =============================================================================
@@ -951,22 +951,28 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		logger.info("Address already exists: %s", existing)
 		return existing
 
+	# Sanitize phone number to comply with Frappe validation
+	raw_phone = cstr(address_data.get("phone", "")).strip()
+	sanitized_phone, original_phone = sanitize_phone_number(raw_phone)
+
 	# Create new address
-	address = frappe.get_doc(
-		{
-			"doctype": "Address",
-			"address_title": address_title,
-			"address_type": address_type,
-			"address_line1": address_line1,
-			"address_line2": cstr(address_data.get("address2", "")).strip(),
-			"city": city,
-			"state": cstr(address_data.get("province", "")).strip(),
-			"pincode": cstr(address_data.get("zip", "")).strip(),
-			"country": country,
-			"phone": cstr(address_data.get("phone", "")).strip(),
-			"links": [{"link_doctype": "Customer", "link_name": customer_name}],
-		}
-	)
+	address_fields = {
+		"doctype": "Address",
+		"address_title": address_title,
+		"address_type": address_type,
+		"address_line1": address_line1,
+		"address_line2": cstr(address_data.get("address2", "")).strip(),
+		"city": city,
+		"state": cstr(address_data.get("province", "")).strip(),
+		"pincode": cstr(address_data.get("zip", "")).strip(),
+		"country": country,
+		"phone": sanitized_phone or "",
+		"links": [{"link_doctype": "Customer", "link_name": customer_name}],
+	}
+	if original_phone:
+		address_fields["fax"] = original_phone
+
+	address = frappe.get_doc(address_fields)
 	address.flags.ignore_mandatory = True
 	address.insert(ignore_permissions=True)
 	logger.info("Address created: %s", address.name)
@@ -1002,7 +1008,7 @@ def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 	)
 
 	# Try multiple sources for phone
-	phone = (
+	raw_phone = (
 		shopify_customer.get("phone")
 		or billing.get("phone")
 		or shipping.get("phone")
@@ -1016,7 +1022,10 @@ def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 		shipping.get("phone"),
 		default_addr.get("phone"),
 	)
-	logger.info("Contact resolved - email: %s, phone: %s", email, phone)
+
+	# Sanitize phone number to comply with Frappe validation
+	phone, original_phone = sanitize_phone_number(raw_phone)
+	logger.info("Contact resolved - email: %s, phone: %s (raw: %s)", email, phone, raw_phone)
 
 	if not email and not phone:
 		logger.warning("No email or phone found for contact creation, customer: %s", customer_name)
@@ -1088,7 +1097,10 @@ def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 		contact.append("email_ids", {"email_id": email, "is_primary": 1})
 
 	if phone:
-		contact.append("phone_nos", {"phone": phone, "is_primary_phone": 1})
+		phone_row = {"phone": phone, "is_primary_phone": 1}
+		if original_phone and frappe.db.has_column("Contact Phone", "shopify_original_phone"):
+			phone_row["shopify_original_phone"] = original_phone
+		contact.append("phone_nos", phone_row)
 
 	contact.flags.ignore_mandatory = True
 	contact.insert(ignore_permissions=True)

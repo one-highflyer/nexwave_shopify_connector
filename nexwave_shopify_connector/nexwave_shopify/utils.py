@@ -2,13 +2,74 @@
 # For license information, please see license.txt
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
 
+from nexwave_shopify_connector.utils.logger import get_logger
+
 if TYPE_CHECKING:
 	from frappe.model.document import Document
+
+# Matches extension markers and everything after them (case-insensitive):
+#   "ext 651", "ext. 651", "ext651", "extension 789", "x100", "x 100"
+# The "x" pattern requires digits after it to avoid false positives (e.g. "0x" in hex)
+_EXTENSION_RE = re.compile(r"\s*(?:ext(?:ension)?\.?\s*\d+|(?<=\d)\s*x\s*\d+).*$", re.IGNORECASE)
+
+# Frappe's phone validation allows: digits, space, +, _, -, comma, period, *, #, parentheses
+# Max length: 20 characters
+_PHONE_DISALLOWED_RE = re.compile(r"[^0-9 +_\-,.*#()]")
+_PHONE_MAX_LENGTH = 20
+
+
+def sanitize_phone_number(raw_phone: str | None) -> tuple[str | None, str | None]:
+	"""Sanitize a phone number to comply with Frappe's phone validation.
+
+	Frappe's validate_phone_number() uses regex [0-9 +_\\-,.*#()] with max 20 chars.
+	First strips extension markers (ext, extension, x) and everything after them,
+	then removes remaining disallowed characters and truncates.
+
+	Args:
+		raw_phone: Raw phone number string from Shopify.
+
+	Returns:
+		Tuple of (sanitized_phone, original_if_modified):
+		- sanitized_phone: Cleaned phone, or None if empty after cleaning.
+		- original_if_modified: Original string only when data was actually
+		  stripped/truncated; None if no changes were needed.
+	"""
+	if not raw_phone:
+		return None, None
+
+	raw_phone = raw_phone.strip()
+	if not raw_phone:
+		return None, None
+
+	# Strip extension markers and everything after them
+	cleaned = _EXTENSION_RE.sub("", raw_phone)
+	# Strip remaining disallowed characters
+	cleaned = _PHONE_DISALLOWED_RE.sub("", cleaned)
+	# Collapse runs of whitespace that may result from stripping inner chars
+	cleaned = " ".join(cleaned.split())
+	# Truncate to Frappe's max length
+	cleaned = cleaned[:_PHONE_MAX_LENGTH].rstrip()
+
+	modified = cleaned != raw_phone
+
+	if modified:
+		logger = get_logger()
+		if not cleaned:
+			logger.warning("Phone number completely emptied by sanitization: %r", raw_phone)
+		else:
+			logger.info("Phone number sanitized: %r -> %r", raw_phone, cleaned)
+
+	if not cleaned:
+		return None, raw_phone if modified else None
+
+	return cleaned, raw_phone if modified else None
+
 
 def create_shopify_log(
 	status: str = "Queued",
