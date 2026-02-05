@@ -4,6 +4,11 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 
 ## Overview
 
+![Multi-Store Architecture](docs/multi-store-architecture.svg)
+
+<details>
+<summary>ASCII diagram (fallback)</summary>
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           NexWave (ERPNext)                                 │
@@ -28,6 +33,12 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 │  (Company A)    │ │  (Company B)    │ │  (Company C)    │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
+
+</details>
+
+## Data Flow
+
+![Data Flow](docs/data-flow.svg)
 
 ## Key Features
 

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 580">
+  <defs>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2196F3"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#4CAF50"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="580" fill="#f8fafc"/>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#1e293b">Shopify Integration - Data Flow</text>
+
+  <!-- NexWave Header -->
+  <rect x="50" y="60" width="180" height="40" rx="20" fill="#0891b2"/>
+  <text x="140" y="86" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="white">NexWave</text>
+
+  <!-- Shopify Header -->
+  <rect x="670" y="60" width="180" height="40" rx="20" fill="#65a30d"/>
+  <text x="760" y="86" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="white">Shopify</text>
+
+  <!-- Sync Direction Box -->
+  <rect x="280" y="55" width="340" height="50" rx="5" fill="#e2e8f0" stroke="#cbd5e1"/>
+  <text x="450" y="75" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#475569">SYNC DIRECTION</text>
+
+  <!-- NexWave Items (Push to Shopify - Blue) -->
+  <rect x="60" y="120" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="143" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Items</text>
+
+  <rect x="60" y="166" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="189" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Item Fields / Metafields</text>
+
+  <rect x="60" y="212" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="235" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Stock Levels</text>
+
+  <rect x="60" y="258" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="281" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Item Groups</text>
+
+  <!-- Shopify Items (Push targets) -->
+  <rect x="680" y="120" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="143" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Products</text>
+
+  <rect x="680" y="166" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="189" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Product Metafields</text>
+
+  <rect x="680" y="212" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="235" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Inventory Levels</text>
+
+  <rect x="680" y="258" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="281" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Collections</text>
+
+  <!-- Blue arrows (NexWave → Shopify) -->
+  <line x1="220" y1="138" x2="670" y2="138" stroke="#2196F3" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="445" y="132" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#1565C0">Products (push - create/update)</text>
+
+  <line x1="220" y1="184" x2="670" y2="184" stroke="#2196F3" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="445" y="178" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#1565C0">Field mapping (standard + metafields)</text>
+
+  <line x1="220" y1="230" x2="670" y2="230" stroke="#2196F3" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="445" y="224" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#1565C0">Inventory sync (per location)</text>
+
+  <line x1="220" y1="276" x2="670" y2="276" stroke="#2196F3" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="445" y="270" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#1565C0">Collection mapping</text>
+
+  <!-- NexWave Items (Pull from Shopify - Green) -->
+  <rect x="60" y="320" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="343" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Sales Orders</text>
+
+  <rect x="60" y="366" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="389" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Sales Invoices</text>
+
+  <rect x="60" y="412" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="435" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Payment Entries</text>
+
+  <rect x="60" y="458" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="481" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Delivery Notes</text>
+
+  <rect x="60" y="504" width="160" height="36" rx="5" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="140" y="527" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0c4a6e">Customers</text>
+
+  <!-- Shopify Items (Pull sources) -->
+  <rect x="680" y="320" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="343" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Orders</text>
+
+  <rect x="680" y="366" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="389" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Order Payments</text>
+
+  <rect x="680" y="412" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="435" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Tax Data</text>
+
+  <rect x="680" y="458" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="481" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Fulfillments</text>
+
+  <rect x="680" y="504" width="160" height="36" rx="5" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="760" y="527" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#365314">Customers</text>
+
+  <!-- Green arrows (Shopify → NexWave) -->
+  <line x1="670" y1="338" x2="230" y2="338" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="445" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#2E7D32">Orders (webhook - auto create SO)</text>
+
+  <line x1="670" y1="384" x2="230" y2="384" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="445" y="378" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#2E7D32">Auto-create Invoice + Payment</text>
+
+  <line x1="670" y1="430" x2="230" y2="430" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="445" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#2E7D32">Tax mapping to accounts</text>
+
+  <line x1="670" y1="476" x2="230" y2="476" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="445" y="470" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#2E7D32">Fulfillment webhook - create DN</text>
+
+  <line x1="670" y1="522" x2="230" y2="522" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="445" y="516" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#2E7D32">Customer lookup/create</text>
+
+  <!-- Legend -->
+  <rect x="300" y="555" width="300" height="20" rx="3" fill="#f1f5f9"/>
+  <line x1="320" y1="565" x2="370" y2="565" stroke="#2196F3" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="380" y="569" font-family="Arial, sans-serif" font-size="10" fill="#475569">NexWave → Shopify (Push)</text>
+  <line x1="500" y1="565" x2="550" y2="565" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="560" y="569" font-family="Arial, sans-serif" font-size="10" fill="#475569">Shopify → NexWave (Webhooks)</text>
+</svg>
