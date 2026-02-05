@@ -1,3 +1,21 @@
+# [1.9.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.8.1...v1.9.0) (2026-02-05)
+
+
+### Bug Fixes
+
+* **fulfillment:** prevent duplicate Delivery Notes on fulfillment webhooks ([787f2f7](https://github.com/one-highflyer/nexwave_shopify_connector/commit/787f2f7819c8d694eba4c63240cee44fa77f8210))
+* **tax:** collect shipping tax types when add_shipping_as_item is True ([1e1f525](https://github.com/one-highflyer/nexwave_shopify_connector/commit/1e1f525fbf3d7ad204ee8f3649926212e1d2c94b))
+* **tax:** correct row_id calculation for multiple shipping lines ([26de31b](https://github.com/one-highflyer/nexwave_shopify_connector/commit/26de31be86e2c25085579089ffbf38d43f36e6ad))
+* **tax:** improve logging and add test data for tax module ([81a2048](https://github.com/one-highflyer/nexwave_shopify_connector/commit/81a204866e0ec3eb7af49297d07c4bd46976fd2a))
+* **tax:** skip adding tax row for free shipping ([e0896bd](https://github.com/one-highflyer/nexwave_shopify_connector/commit/e0896bde1c311ebf4dc77b9d588c56099076e664))
+* **test:** clean up Item Tax Templates in tearDownClass ([c5ff25b](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c5ff25b63dbcd0f34b067a0b9e170f1469b6f023))
+
+
+### Features
+
+* **tax:** add Item Tax Template support for GST/BAS reporting ([3c8be31](https://github.com/one-highflyer/nexwave_shopify_connector/commit/3c8be31762f08e80be6cd0aa32c1504ec2e884c3))
+* **tax:** add store-level write-off account for rounding adjustments ([7ef0ee1](https://github.com/one-highflyer/nexwave_shopify_connector/commit/7ef0ee1eeaf004e66a75ccadc63183ecd60d902e))
+
 ## [1.8.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.8.0...v1.8.1) (2026-01-29)
 
 
