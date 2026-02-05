@@ -1,3 +1,12 @@
+## [1.9.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.0...v1.9.1) (2026-02-05)
+
+
+### Bug Fixes
+
+* **order:** address PR review feedback for phone sanitization ([1113c23](https://github.com/one-highflyer/nexwave_shopify_connector/commit/1113c238a0b78b380940c39b45b5d657a514fbf3))
+* **order:** sanitize Shopify phone numbers before Frappe validation ([7f746ee](https://github.com/one-highflyer/nexwave_shopify_connector/commit/7f746eee2bc4650bdd3d584692326cd7a0134c35))
+* **order:** strip extension markers and trailing digits from phone numbers ([25775f7](https://github.com/one-highflyer/nexwave_shopify_connector/commit/25775f7872a169c7aa3bc702ef1a009a32ac5460))
+
 # [1.9.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.8.1...v1.9.0) (2026-02-05)
 
 
