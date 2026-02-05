@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+  <!-- Background -->
+  <rect width="800" height="450" fill="#f8fafc"/>
+
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#1e293b">Multi-Store Architecture</text>
+
+  <!-- NexWave Container -->
+  <rect x="50" y="55" width="700" height="160" rx="10" fill="#e0f2fe" stroke="#0891b2" stroke-width="2"/>
+  <text x="400" y="80" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0c4a6e">NexWave</text>
+
+  <!-- Companies Row -->
+  <rect x="80" y="95" width="120" height="40" rx="5" fill="white" stroke="#0891b2"/>
+  <text x="140" y="120" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0c4a6e">Company AU</text>
+
+  <rect x="220" y="95" width="120" height="40" rx="5" fill="white" stroke="#0891b2"/>
+  <text x="280" y="120" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0c4a6e">Company NZ</text>
+
+  <rect x="360" y="95" width="120" height="40" rx="5" fill="white" stroke="#0891b2"/>
+  <text x="420" y="120" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0c4a6e">Company US</text>
+
+  <rect x="500" y="95" width="120" height="40" rx="5" fill="white" stroke="#0891b2"/>
+  <text x="560" y="120" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0c4a6e">Brand A Ltd</text>
+
+  <!-- Shopify Store DocType -->
+  <rect x="200" y="155" width="400" height="45" rx="5" fill="#0891b2"/>
+  <text x="400" y="175" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Shopify Store DocType</text>
+  <text x="400" y="192" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#e0f2fe">(Multi-Store Configuration)</text>
+
+  <!-- Connection lines from companies to Shopify Store -->
+  <line x1="140" y1="135" x2="300" y2="155" stroke="#0891b2" stroke-width="1.5"/>
+  <line x1="280" y1="135" x2="350" y2="155" stroke="#0891b2" stroke-width="1.5"/>
+  <line x1="420" y1="135" x2="450" y2="155" stroke="#0891b2" stroke-width="1.5"/>
+  <line x1="560" y1="135" x2="500" y2="155" stroke="#0891b2" stroke-width="1.5"/>
+
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arrowDown" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#65a30d"/>
+    </marker>
+  </defs>
+
+  <!-- Connection lines to Shopify stores -->
+  <line x1="200" y1="200" x2="140" y2="280" stroke="#65a30d" stroke-width="2" marker-end="url(#arrowDown)"/>
+  <line x1="350" y1="200" x2="340" y2="280" stroke="#65a30d" stroke-width="2" marker-end="url(#arrowDown)"/>
+  <line x1="450" y1="200" x2="540" y2="280" stroke="#65a30d" stroke-width="2" marker-end="url(#arrowDown)"/>
+  <line x1="600" y1="200" x2="700" y2="280" stroke="#65a30d" stroke-width="2" marker-end="url(#arrowDown)"/>
+
+  <!-- Shopify Stores -->
+  <rect x="60" y="290" width="160" height="70" rx="8" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
+  <text x="140" y="315" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#365314">store-au.myshopify.com</text>
+  <text x="140" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">Company AU</text>
+  <text x="140" y="350" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">AUD Currency</text>
+
+  <rect x="260" y="290" width="160" height="70" rx="8" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
+  <text x="340" y="315" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#365314">store-nz.myshopify.com</text>
+  <text x="340" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">Company NZ</text>
+  <text x="340" y="350" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">NZD Currency</text>
+
+  <rect x="460" y="290" width="160" height="70" rx="8" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
+  <text x="540" y="315" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#365314">store-us.myshopify.com</text>
+  <text x="540" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">Company US</text>
+  <text x="540" y="350" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">USD Currency</text>
+
+  <rect x="620" y="290" width="160" height="70" rx="8" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
+  <text x="700" y="315" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#365314">brand-a.myshopify.com</text>
+  <text x="700" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">Brand A Ltd</text>
+  <text x="700" y="350" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#4d7c0f">Multi-currency</text>
+
+  <!-- Shopify Logo area -->
+  <rect x="60" y="375" width="720" height="30" rx="5" fill="#65a30d"/>
+  <text x="400" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Shopify</text>
+
+  <!-- Legend -->
+  <rect x="60" y="415" width="300" height="25" rx="3" fill="#f1f5f9"/>
+  <rect x="80" y="422" width="12" height="12" fill="#e0f2fe" stroke="#0891b2"/>
+  <text x="100" y="432" font-family="Arial, sans-serif" font-size="10" fill="#475569">NexWave</text>
+  <rect x="170" y="422" width="12" height="12" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="190" y="432" font-family="Arial, sans-serif" font-size="10" fill="#475569">Shopify Stores</text>
+  <line x1="270" y1="428" x2="300" y2="428" stroke="#65a30d" stroke-width="2" marker-end="url(#arrowDown)"/>
+  <text x="310" y="432" font-family="Arial, sans-serif" font-size="10" fill="#475569">Connection</text>
+</svg>
