@@ -126,13 +126,13 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 	def test_extension_with_ext(self):
 		"""Phone with 'ext 651' should strip alphabetic chars."""
 		sanitized, original = sanitize_phone_number("09 836 7700 ext 651")
-		self.assertEqual(sanitized, "09 836 7700 651")
+		self.assertEqual(sanitized, "09 836 7700")
 		self.assertEqual(original, "09 836 7700 ext 651")
 
 	def test_extension_with_x(self):
 		"""Phone with 'x100' should strip the 'x'."""
 		sanitized, original = sanitize_phone_number("+1-555-1234 x100")
-		self.assertEqual(sanitized, "+1-555-1234 100")
+		self.assertEqual(sanitized, "+1-555-1234")
 		self.assertEqual(original, "+1-555-1234 x100")
 
 	def test_alphabetic_phone(self):
@@ -144,7 +144,7 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 	def test_too_long_with_invalid_chars(self):
 		"""Phone with invalid chars and >20 chars after stripping."""
 		sanitized, original = sanitize_phone_number("+64 21 123 456 extension 789")
-		self.assertEqual(sanitized, "+64 21 123 456 789")
+		self.assertEqual(sanitized, "+64 21 123 456")
 		self.assertEqual(original, "+64 21 123 456 extension 789")
 
 	def test_too_long_valid_chars_only(self):

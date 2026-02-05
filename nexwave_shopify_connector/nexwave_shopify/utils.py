@@ -13,6 +13,11 @@ from nexwave_shopify_connector.utils.logger import get_logger
 if TYPE_CHECKING:
 	from frappe.model.document import Document
 
+# Matches extension markers and everything after them (case-insensitive):
+#   "ext 651", "ext. 651", "ext651", "extension 789", "x100", "x 100"
+# The "x" pattern requires digits after it to avoid false positives (e.g. "0x" in hex)
+_EXTENSION_RE = re.compile(r"\s*(?:ext(?:ension)?\.?\s*\d+|(?<=\d)\s*x\s*\d+).*$", re.IGNORECASE)
+
 # Frappe's phone validation allows: digits, space, +, _, -, comma, period, *, #, parentheses
 # Max length: 20 characters
 _PHONE_DISALLOWED_RE = re.compile(r"[^0-9 +_\-,.*#()]")
@@ -23,7 +28,8 @@ def sanitize_phone_number(raw_phone: str | None) -> tuple[str | None, str | None
 	"""Sanitize a phone number to comply with Frappe's phone validation.
 
 	Frappe's validate_phone_number() uses regex [0-9 +_\\-,.*#()] with max 20 chars.
-	This strips disallowed characters (e.g. "ext", alphabetic chars) and truncates.
+	First strips extension markers (ext, extension, x) and everything after them,
+	then removes remaining disallowed characters and truncates.
 
 	Args:
 		raw_phone: Raw phone number string from Shopify.
@@ -41,7 +47,10 @@ def sanitize_phone_number(raw_phone: str | None) -> tuple[str | None, str | None
 	if not raw_phone:
 		return None, None
 
-	cleaned = _PHONE_DISALLOWED_RE.sub("", raw_phone)
+	# Strip extension markers and everything after them
+	cleaned = _EXTENSION_RE.sub("", raw_phone)
+	# Strip remaining disallowed characters
+	cleaned = _PHONE_DISALLOWED_RE.sub("", cleaned)
 	# Collapse runs of whitespace that may result from stripping inner chars
 	cleaned = " ".join(cleaned.split())
 	# Truncate to Frappe's max length
