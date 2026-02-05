@@ -66,6 +66,7 @@
   "section_break_taxes",
   "default_sales_tax_account",
   "default_shipping_charges_account",
+  "write_off_account",
   "tax_accounts",
   "webhooks_section",
   "shop_domain_alias",
@@ -458,6 +459,13 @@
    "options": "Account"
   },
   {
+   "description": "Account for rounding adjustments during order sync. Falls back to Company's Write Off Account if not set.",
+   "fieldname": "write_off_account",
+   "fieldtype": "Link",
+   "label": "Write Off Account",
+   "options": "Account"
+  },
+  {
    "fieldname": "tax_accounts",
    "fieldtype": "Table",
    "label": "Tax Accounts",
@@ -529,7 +537,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-02-04 12:00:00.000000",
+ "modified": "2026-02-05 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

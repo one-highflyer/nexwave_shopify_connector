@@ -1155,7 +1155,7 @@ def _create_sales_order(
 	so.insert(ignore_permissions=True)
 
 	# Apply rounding adjustment to match Shopify total
-	apply_rounding_adjustment(so, order)
+	apply_rounding_adjustment(so, order, store=store)
 
 	return so
 

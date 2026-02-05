@@ -7,7 +7,8 @@ RoundingAdjuster: Applies rounding adjustment after Sales Order save.
 This handles small discrepancies between Shopify total and ERPNext calculated total
 by adding a write-off entry to match exactly.
 
-The adjustment is applied as an "Actual" tax row using the company's write_off_account.
+The adjustment is applied as an "Actual" tax row using the store's write_off_account
+(if configured) or the company's write_off_account as fallback.
 """
 
 import frappe
@@ -17,17 +18,18 @@ from frappe.utils import flt
 from nexwave_shopify_connector.utils.logger import get_logger
 
 
-def apply_rounding_adjustment(so, shopify_order: dict) -> float:
+def apply_rounding_adjustment(so, shopify_order: dict, store=None) -> float:
 	"""
 	Apply rounding adjustment to Sales Order after save.
 
 	Compares the Shopify total_price with ERPNext's calculated grand_total.
 	If there's a difference (> $0.01), adds an adjustment row using the
-	company's write_off_account.
+	store's write_off_account (if configured) or the company's write_off_account.
 
 	Args:
 	    so: Sales Order document (after insert)
 	    shopify_order: Original Shopify order JSON
+	    store: Shopify Store document (optional, for store-level write_off_account)
 
 	Returns:
 	    The adjustment amount applied (0 if no adjustment needed)
@@ -57,15 +59,20 @@ def apply_rounding_adjustment(so, shopify_order: dict) -> float:
 		difference,
 	)
 
-	# Get write-off account from company
-	write_off_account = frappe.get_cached_value("Company", so.company, "write_off_account")
+	# Get write-off account (store-level first, then company fallback)
+	write_off_account = None
+	if store and store.write_off_account:
+		write_off_account = store.write_off_account
+
+	if not write_off_account:
+		write_off_account = frappe.get_cached_value("Company", so.company, "write_off_account")
 
 	if not write_off_account:
 		frappe.throw(
 			_(
 				"Cannot sync order {0}: Rounding adjustment of {1} required but write_off_account "
-				"not configured for company {2}. Please configure the Write Off Account in Company settings."
-			).format(so.name, difference, so.company)
+				"not configured. Please configure Write Off Account in Shopify Store or Company settings."
+			).format(so.name, difference)
 		)
 
 	# Add adjustment row

@@ -599,7 +599,28 @@ class TestRoundingAdjuster(FrappeTestCase):
 
 		# Should throw with actionable error message
 		self.assertIn("write_off_account", str(context.exception).lower())
-		self.assertIn("NonExistent Company", str(context.exception))
+		self.assertIn("Shopify Store or Company", str(context.exception))
+
+	def test_store_level_write_off_account(self):
+		"""Test that store-level write_off_account is used when configured."""
+		from unittest.mock import MagicMock
+
+		from nexwave_shopify_connector.nexwave_shopify.tax.rounding import apply_rounding_adjustment
+
+		order = {"total_price": "100.50"}
+		so = self._create_mock_sales_order(100.00)
+
+		# Create mock store with write_off_account
+		store = MagicMock()
+		store.write_off_account = "Store Write Off Account - TC"
+
+		adjustment = apply_rounding_adjustment(so, order, store=store)
+
+		self.assertEqual(adjustment, 0.50)
+		so.append.assert_called_once()
+		tax_row = so.append.call_args[0][1]
+		# Should use store's write_off_account, not company's
+		self.assertEqual(tax_row["account_head"], "Store Write Off Account - TC")
 
 
 class TestErrorHandling(FrappeTestCase):

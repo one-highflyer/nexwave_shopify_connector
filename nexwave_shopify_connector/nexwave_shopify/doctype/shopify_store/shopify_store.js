@@ -281,7 +281,39 @@ frappe.ui.form.on("Shopify Store", {
 				filters: {
 					company: frm.doc.company,
 					account_type: "Tax",
-					is_group: 0
+					is_group: 0,
+					disabled: 0
+				}
+			};
+		});
+
+		// Filter sales taxes and charges template on tax accounts child table by company
+		frm.set_query("sales_taxes_and_charges_template", "tax_accounts", function () {
+			return {
+				filters: {
+					company: frm.doc.company,
+					disabled: 0
+				}
+			};
+		});
+
+		// Filter zero-rated item tax template on tax accounts child table by company
+		frm.set_query("zero_rated_item_tax_template", "tax_accounts", function () {
+			return {
+				filters: {
+					company: frm.doc.company,
+					disabled: 0
+				}
+			};
+		});
+
+		// Filter write off account by company
+		frm.set_query("write_off_account", function () {
+			return {
+				filters: {
+					company: frm.doc.company,
+					is_group: 0,
+					disabled: 0
 				}
 			};
 		});
@@ -293,6 +325,7 @@ frappe.ui.form.on("Shopify Store", {
 		frm.set_value("cost_center", "");
 		frm.set_value("default_sales_tax_account", "");
 		frm.set_value("default_shipping_charges_account", "");
+		frm.set_value("write_off_account", "");
 	},
 
 	auth_method(frm) {
