@@ -141,12 +141,17 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 		self.assertEqual(sanitized, "1-800-")
 		self.assertEqual(original, "1-800-FLOWERS")
 
-	def test_too_long(self):
-		"""Phone exceeding 20 chars should be truncated."""
+	def test_too_long_with_invalid_chars(self):
+		"""Phone with invalid chars and >20 chars after stripping."""
 		sanitized, original = sanitize_phone_number("+64 21 123 456 extension 789")
-		self.assertIsNotNone(sanitized)
-		self.assertLessEqual(len(sanitized), 20)
+		self.assertEqual(sanitized, "+64 21 123 456 789")
 		self.assertEqual(original, "+64 21 123 456 extension 789")
+
+	def test_too_long_valid_chars_only(self):
+		"""Phone with only valid chars but exceeding 20 char limit should be truncated."""
+		sanitized, original = sanitize_phone_number("+64 21 123 456 78901234")
+		self.assertEqual(sanitized, "+64 21 123 456 78901")
+		self.assertEqual(original, "+64 21 123 456 78901234")
 
 	def test_already_valid(self):
 		"""Valid phone should pass through unchanged."""

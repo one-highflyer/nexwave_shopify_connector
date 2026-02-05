@@ -1098,7 +1098,7 @@ def _create_contact(shopify_customer: dict, customer_name: str) -> str | None:
 
 	if phone:
 		phone_row = {"phone": phone, "is_primary_phone": 1}
-		if original_phone:
+		if original_phone and frappe.db.has_column("Contact Phone", "shopify_original_phone"):
 			phone_row["shopify_original_phone"] = original_phone
 		contact.append("phone_nos", phone_row)
 

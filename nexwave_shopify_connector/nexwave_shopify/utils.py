@@ -2,17 +2,16 @@
 # For license information, please see license.txt
 
 import json
-import logging
 import re
 from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
 
+from nexwave_shopify_connector.utils.logger import get_logger
+
 if TYPE_CHECKING:
 	from frappe.model.document import Document
-
-logger = logging.getLogger(__name__)
 
 # Frappe's phone validation allows: digits, space, +, _, -, comma, period, *, #, parentheses
 # Max length: 20 characters
@@ -51,11 +50,11 @@ def sanitize_phone_number(raw_phone: str | None) -> tuple[str | None, str | None
 	modified = cleaned != raw_phone
 
 	if modified:
-		logger.info(
-			"Phone number sanitized: %r -> %r",
-			raw_phone,
-			cleaned or "(empty)",
-		)
+		logger = get_logger()
+		if not cleaned:
+			logger.warning("Phone number completely emptied by sanitization: %r", raw_phone)
+		else:
+			logger.info("Phone number sanitized: %r -> %r", raw_phone, cleaned)
 
 	if not cleaned:
 		return None, raw_phone if modified else None
