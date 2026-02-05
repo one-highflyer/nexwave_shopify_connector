@@ -756,6 +756,13 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 		super().tearDownClass()
 		# Clean up test items
 		delete_test_items(cls.TEST_ITEM_CODES, commit=True)
+		# Clean up test Item Tax Templates
+		for template_name in [
+			getattr(cls, "gst15_template", None),
+			getattr(cls, "zr_template", None),
+		]:
+			if template_name and frappe.db.exists("Item Tax Template", template_name):
+				frappe.delete_doc("Item Tax Template", template_name, force=True)
 
 	@classmethod
 	def _create_test_item_tax_templates(cls):
