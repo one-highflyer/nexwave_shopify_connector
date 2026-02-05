@@ -15,6 +15,7 @@ from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
 from nexwave_shopify_connector.nexwave_shopify.fulfillment import create_delivery_notes_from_fulfillments
+from nexwave_shopify_connector.nexwave_shopify.tax import TaxBuilder, apply_rounding_adjustment
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 from nexwave_shopify_connector.utils.logger import get_logger
 
@@ -1153,6 +1154,9 @@ def _create_sales_order(
 	so.flags.ignore_mandatory = True
 	so.insert(ignore_permissions=True)
 
+	# Apply rounding adjustment to match Shopify total
+	apply_rounding_adjustment(so, order, store=store)
+
 	return so
 
 
@@ -1265,131 +1269,21 @@ def _get_total_discount(line_item: dict) -> float:
 
 def _get_order_taxes(order: dict, store, items: list) -> list:
 	"""
-	Build tax rows from Shopify order taxes.
+	Build tax rows from Shopify order taxes using TaxBuilder.
+
+	Uses "On Net Total" tax calculation instead of per-line-item "Actual" taxes.
+	This results in cleaner tax rows that automatically recalculate when items change.
 
 	Args:
 		order: Shopify order data
 		store: Shopify Store document
-		items: List of SO item dicts
+		items: List of SO item dicts (may be modified for zero-rating and shipping)
 
 	Returns:
 		List of tax dicts for Sales Order
 	"""
-	taxes = []
-	line_items = order.get("line_items", [])
-
-	# Process line item taxes
-	for line_item in line_items:
-		for tax in line_item.get("tax_lines", []):
-			tax_account = _get_tax_account(tax.get("title"), store, "sales_tax")
-			taxes.append(
-				{
-					"charge_type": "Actual",
-					"account_head": tax_account,
-					"rate": flt(tax.get("rate")) * 100,
-					"description": f"{tax.get('title')} - {flt(tax.get('rate')) * 100:.2f}%",
-					"tax_amount": flt(tax.get("price")),
-					"cost_center": store.cost_center,
-					"dont_recompute_tax": 1,
-				}
-			)
-
-	# Process shipping
-	_add_shipping_charges(order, store, items, taxes)
-
-	return taxes
-
-
-def _add_shipping_charges(order: dict, store, items: list, taxes: list):
-	"""Add shipping charges as item or tax based on store settings."""
-	shipping_lines = order.get("shipping_lines", [])
-	taxes_inclusive = order.get("taxes_included", False)
-	delivery_date = items[-1]["delivery_date"] if items else nowdate()
-
-	for shipping in shipping_lines:
-		if not shipping.get("price"):
-			continue
-
-		# Calculate shipping amount
-		shipping_discounts = shipping.get("discount_allocations") or []
-		total_discount = sum(flt(d.get("amount")) for d in shipping_discounts)
-
-		shipping_taxes = shipping.get("tax_lines") or []
-		total_tax = sum(flt(t.get("price")) for t in shipping_taxes)
-
-		shipping_amount = flt(shipping["price"]) - total_discount
-		if taxes_inclusive:
-			shipping_amount -= total_tax
-
-		# Add as item or tax
-		if store.add_shipping_as_item and store.shipping_item:
-			items.append(
-				{
-					"item_code": store.shipping_item,
-					"item_name": shipping.get("title") or "Shipping",
-					"rate": shipping_amount,
-					"qty": 1,
-					"delivery_date": delivery_date,
-					"warehouse": store.warehouse,
-					"cost_center": store.cost_center,
-				}
-			)
-		else:
-			tax_account = _get_tax_account(shipping.get("title"), store, "shipping")
-			taxes.append(
-				{
-					"charge_type": "Actual",
-					"account_head": tax_account,
-					"description": shipping.get("title") or "Shipping",
-					"tax_amount": shipping_amount,
-					"cost_center": store.cost_center,
-				}
-			)
-
-		# Add shipping taxes
-		for tax in shipping_taxes:
-			tax_account = _get_tax_account(tax.get("title"), store, "sales_tax")
-			taxes.append(
-				{
-					"charge_type": "Actual",
-					"account_head": tax_account,
-					"rate": flt(tax.get("rate")) * 100,
-					"description": f"{tax.get('title')} - {flt(tax.get('rate')) * 100:.2f}%",
-					"tax_amount": flt(tax.get("price")),
-					"cost_center": store.cost_center,
-					"dont_recompute_tax": 1,
-				}
-			)
-
-
-def _get_tax_account(tax_title: str, store, charge_type: str) -> str:
-	"""
-	Get tax account for a Shopify tax.
-
-	Looks up in store's tax_accounts mapping, falls back to defaults.
-
-	Args:
-		tax_title: Shopify tax title
-		store: Shopify Store document
-		charge_type: 'sales_tax' or 'shipping'
-
-	Returns:
-		Account name
-	"""
-	# Look up in tax mapping
-	for mapping in store.tax_accounts or []:
-		if mapping.shopify_tax == tax_title:
-			return mapping.tax_account
-
-	# Fallback to defaults
-	if charge_type == "shipping":
-		if store.default_shipping_charges_account:
-			return store.default_shipping_charges_account
-	else:
-		if store.default_sales_tax_account:
-			return store.default_sales_tax_account
-
-	frappe.throw(_("Tax Account not configured for Shopify tax: {0}").format(tax_title))
+	builder = TaxBuilder(order, store, items)
+	return builder.build()
 
 
 def _create_sales_invoice(so, order: dict, store) -> "Document | None":

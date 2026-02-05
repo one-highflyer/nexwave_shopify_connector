@@ -6,7 +6,9 @@
  "engine": "InnoDB",
  "field_order": [
   "shopify_tax",
-  "tax_account"
+  "tax_account",
+  "sales_taxes_and_charges_template",
+  "zero_rated_item_tax_template"
  ],
  "fields": [
   {
@@ -24,12 +26,27 @@
    "label": "Tax Account",
    "options": "Account",
    "reqd": 1
+  },
+  {
+   "fieldname": "sales_taxes_and_charges_template",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Tax Template",
+   "options": "Sales Taxes and Charges Template",
+   "description": "Optional: Sales Taxes and Charges Template to use for this tax type. If set, tax rows will be copied from this template."
+  },
+  {
+   "fieldname": "zero_rated_item_tax_template",
+   "fieldtype": "Link",
+   "label": "Zero-Rated Item Tax Template",
+   "options": "Item Tax Template",
+   "description": "Item Tax Template for zero-rated items (e.g., ZR). If not set, falls back to item_tax_rate JSON."
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-28 12:00:00.000000",
+ "modified": "2026-02-04 23:30:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store Tax Account",

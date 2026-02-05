@@ -159,6 +159,23 @@ def create_delivery_notes_from_fulfillments(order: dict, store) -> dict:
 			"message": "No fulfillments in order",
 		}
 
+	# Check for existing DNs against this SO
+	has_existing_dns = _has_existing_delivery_notes(so_name)
+
+	if has_existing_dns and not store.auto_fulfill_remaining_qty:
+		logger.info(
+			"Skipping DN creation for SO %s - existing Delivery Notes found and "
+			"auto_fulfill_remaining_qty is disabled",
+			so_name,
+		)
+		return {
+			"created": [],
+			"skipped": len(fulfillments),
+			"failed": 0,
+			"sales_order": so_name,
+			"message": f"Existing Delivery Notes found for {so_name}. Enable 'Auto-create Delivery Notes for Remaining Qty' in Shopify Store settings to auto-create DNs for remaining quantities.",
+		}
+
 	created_dns = []
 	skipped_count = 0
 	failed_count = 0
@@ -301,24 +318,43 @@ def _create_delivery_note_from_fulfillment(
 		fulfillment_items=line_items,
 		warehouse=warehouse,
 		store=store,
+		so_name=so.name,
 	)
 
 	# Add shipping items if configured
 	if store.add_shipping_as_item and store.shipping_item:
+		# Get delivered qty map for shipping item check if auto_fulfill_remaining_qty is enabled
+		delivered_qty_map = {}
+		if store.auto_fulfill_remaining_qty:
+			delivered_qty_map = _get_delivered_qty_map(so.name)
+
 		for so_item in so.items:
 			if so_item.item_code == store.shipping_item:
-				dn_items.append({
-					"item_code": so_item.item_code,
-					"item_name": so_item.item_name,
-					"description": so_item.description,
-					"qty": so_item.qty,
-					"rate": so_item.rate,
-					"warehouse": warehouse or store.warehouse,
-					"against_sales_order": so_item.parent,
-					"so_detail": so_item.name,
-					"cost_center": store.cost_center,
-				})
-				logger.info("Added shipping item %s to DN", so_item.item_code)
+				qty = so_item.qty
+
+				# Check remaining qty if setting is enabled
+				if store.auto_fulfill_remaining_qty:
+					already_delivered = delivered_qty_map.get(so_item.name, 0)
+					remaining_qty = so_item.qty - already_delivered
+					if remaining_qty <= 0:
+						logger.info("Shipping item %s already delivered, skipping", so_item.item_code)
+						continue
+					qty = min(qty, remaining_qty)
+
+				dn_items.append(
+					{
+						"item_code": so_item.item_code,
+						"item_name": so_item.item_name,
+						"description": so_item.description,
+						"qty": qty,
+						"rate": so_item.rate,
+						"warehouse": warehouse or store.warehouse,
+						"against_sales_order": so_item.parent,
+						"so_detail": so_item.name,
+						"cost_center": store.cost_center,
+					}
+				)
+				logger.info("Added shipping item %s to DN (qty: %s)", so_item.item_code, qty)
 
 	if not dn_items:
 		logger.warning(
@@ -365,6 +401,7 @@ def _get_fulfillment_items(
 	fulfillment_items: list,
 	warehouse: str,
 	store,
+	so_name: str,
 ) -> list:
 	"""
 	Match fulfillment line items to Sales Order items and build DN item list.
@@ -374,6 +411,7 @@ def _get_fulfillment_items(
 		fulfillment_items: Shopify fulfillment line items
 		warehouse: Warehouse to set on items
 		store: Shopify Store document
+		so_name: Sales Order name (for remaining qty calculation)
 
 	Returns:
 		List of item dicts for Delivery Note
@@ -387,6 +425,11 @@ def _get_fulfillment_items(
 		item_code = so_item.item_code
 		# Get the SKU (item_code is used as SKU in the order sync)
 		so_item_by_sku[item_code] = so_item
+
+	# Get already-delivered quantities if auto_fulfill_remaining_qty is enabled
+	delivered_qty_map = {}
+	if store.auto_fulfill_remaining_qty:
+		delivered_qty_map = _get_delivered_qty_map(so_name)
 
 	for f_item in fulfillment_items:
 		sku = f_item.get("sku")
@@ -412,6 +455,32 @@ def _get_fulfillment_items(
 				continue
 
 		so_item = so_item_by_sku[sku]
+
+		# Calculate remaining qty if setting is enabled
+		if store.auto_fulfill_remaining_qty:
+			already_delivered = delivered_qty_map.get(so_item.name, 0)
+			remaining_qty = so_item.qty - already_delivered
+
+			if remaining_qty <= 0:
+				logger.info(
+					"Skipping item %s - already fully delivered (ordered: %s, delivered: %s)",
+					so_item.item_code,
+					so_item.qty,
+					already_delivered,
+				)
+				continue
+
+			# Cap at remaining qty
+			if qty > remaining_qty:
+				logger.info(
+					"Capping qty for %s from %s to %s (already delivered: %s of %s)",
+					so_item.item_code,
+					qty,
+					remaining_qty,
+					already_delivered,
+					so_item.qty,
+				)
+				qty = remaining_qty
 
 		dn_items.append(
 			{
@@ -481,3 +550,54 @@ def _get_tracking_info(fulfillment: dict) -> str | None:
 		parts.append(f"Tracking URL(s): {', '.join(tracking_urls)}")
 
 	return "\n".join(parts)
+
+
+def _has_existing_delivery_notes(so_name: str) -> bool:
+	"""
+	Check if any Delivery Notes exist against a Sales Order.
+
+	Includes both draft (docstatus=0) and submitted (docstatus=1) DNs.
+
+	Args:
+		so_name: Sales Order name
+
+	Returns:
+		True if at least one DN exists
+	"""
+	return frappe.db.exists(
+		"Delivery Note Item",
+		{
+			"against_sales_order": so_name,
+			"docstatus": ["in", [0, 1]],
+		},
+	)
+
+
+def _get_delivered_qty_map(so_name: str) -> dict[str, float]:
+	"""
+	Get total delivered quantities for each SO item.
+
+	Only counts submitted DNs (docstatus=1) for qty calculation.
+
+	Args:
+		so_name: Sales Order name
+
+	Returns:
+		Dict mapping so_detail (SO Item name) → total delivered qty
+	"""
+	delivered_items = frappe.get_all(
+		"Delivery Note Item",
+		filters={
+			"against_sales_order": so_name,
+			"docstatus": 1,
+		},
+		fields=["so_detail", "qty"],
+	)
+
+	delivered_qty_map = {}
+	for item in delivered_items:
+		so_detail = item.get("so_detail")
+		if so_detail:
+			delivered_qty_map[so_detail] = delivered_qty_map.get(so_detail, 0) + item.get("qty", 0)
+
+	return delivered_qty_map

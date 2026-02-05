@@ -170,10 +170,58 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 - Auto-create Payment Entry (requires auto-create invoice)
 - Configurable Cash/Bank account for payment entries
 
+**Fulfillment Sync (Shopify → NexWave):**
+```
+┌─────────────────┐     Webhook      ┌─────────────────────────────┐
+│ Shopify         │ ───────────────► │ NexWave Webhook Endpoint    │
+│ Fulfillment     │  orders/fulfilled│                             │
+│ Created         │                  │ 1. Find linked Sales Order  │
+└─────────────────┘                  │ 2. Check for existing DNs   │
+                                     │ 3. Create Delivery Note     │
+                                     │ 4. Add tracking info        │
+                                     └─────────────────────────────┘
+```
+
+- **Webhook-based**: Listens to `orders/fulfilled` and `orders/partially_fulfilled` events
+- **Duplicate prevention**: Checks for existing Delivery Notes before creating new ones
+- **Partial fulfillment**: Option to auto-create DNs for remaining quantities
+- **Tracking info**: Captures tracking number and company from Shopify fulfillment
+
 **Tax Handling:**
-- Map Shopify tax titles (e.g., "GST", "VAT") to ERPNext tax accounts
-- Shipping charges can be added as line item or tax entry
-- Tax rates preserved for GST reporting
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Tax Calculation Flow                         │
+│                                                                 │
+│  Shopify Order (taxes_included: true)                          │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Line Items with tax_lines[] + Shipping with tax_lines[] │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ TaxBuilder: "On Net Total" approach                     │   │
+│  │ - Single GST row at order level (not per-item)          │   │
+│  │ - Zero-rated items get item_tax_template override       │   │
+│  │ - Detects tax rate from order (15% NZ, 10% AU)          │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Sales Order Taxes Table:                                │   │
+│  │ 1. GST @ 15% (On Net Total)                             │   │
+│  │ 2. Shipping (Actual) - if not added as item             │   │
+│  │ 3. GST on Shipping (On Previous Row Amount)             │   │
+│  │ 4. Rounding Adjustment (if needed)                      │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **"On Net Total" approach**: Single GST tax row instead of per-item tax rows (cleaner, handles large orders efficiently)
+- **Zero-rated items**: Automatically detected (taxable=false or empty tax_lines) and assigned zero-rate item_tax_template
+- **Multi-region support**: Handles different tax rates (NZ 15% GST, AU 10% GST) based on order data
+- **Shipping options**: Add as line item (taxed via On Net Total) or as tax row with separate GST on shipping
+- **Rounding adjustments**: Automatic write-off for small discrepancies between Shopify and ERPNext totals
+- **Store-level write-off account**: Configure per-store or fall back to company's write_off_account
 
 **Customer & Address Handling:**
 - Customer lookup by `shopify_customer_id` first, then by email
@@ -227,12 +275,13 @@ Multi-store Shopify connector for NexWave (ERPNext) - designed to connect multip
 
 | DocType | Description |
 |---------|-------------|
-| **Shopify Store** | Main configuration - auth, company, sync settings |
+| **Shopify Store** | Main configuration - auth, company, tax accounts, write-off account, sync settings |
 | Shopify Store Warehouse Mapping | Maps Shopify locations ↔ ERPNext warehouses |
 | Shopify Store Item Field | Field mapping (standard fields & metafields) |
 | Shopify Store Collection Mapping | ERPNext values → Shopify collections |
 | Shopify Store Item Filter | Auto-eligibility rules |
-| Shopify Store Tax Account | Tax mapping configuration |
+| Shopify Store Tax Account | Tax mapping (Shopify tax → ERPNext account + item tax templates) |
+| Shopify Store Payment Method Mapping | Maps Shopify payment gateways → ERPNext Mode of Payment |
 | Shopify Store Webhook | Registered webhook tracking |
 | Item Shopify Store | Per-item, per-store mapping (child of Item) |
 
@@ -338,8 +387,13 @@ All required scopes are requested automatically during the OAuth flow:
    - Authentication method (Legacy or OAuth)
    - Company mapping
    - Warehouse and location mappings
-3. Configure field mappings, collection mappings, and filters as needed
-4. Enable the store to start syncing
+3. Configure tax settings:
+   - Default Sales Tax Account (for GST/VAT)
+   - Default Shipping Charges Account
+   - Write Off Account (for rounding adjustments, falls back to Company's if not set)
+   - Tax account mappings for specific Shopify tax titles
+4. Configure field mappings, collection mappings, and filters as needed
+5. Enable the store to start syncing
 
 ## Architecture
 
@@ -349,8 +403,16 @@ nexwave_shopify_connector/
 │   ├── connection.py      # @shopify_session decorator, webhook endpoint
 │   ├── oauth.py           # OAuth authorize & callback endpoints
 │   ├── order.py           # Order sync logic (webhooks & manual sync)
+│   ├── fulfillment.py     # Fulfillment webhook → Delivery Note creation
 │   ├── product.py         # Product/item sync to Shopify
+│   ├── inventory.py       # Inventory sync to Shopify
 │   ├── utils.py           # Logging, eligibility helpers
+│   ├── tax/               # Tax calculation module
+│   │   ├── __init__.py    # Public exports
+│   │   ├── builder.py     # TaxBuilder: orchestrates tax row creation
+│   │   ├── detector.py    # TaxDetector: identifies zero-rated items
+│   │   ├── shipping.py    # ShippingTaxHandler: shipping charges & GST
+│   │   └── rounding.py    # Rounding adjustment for total matching
 │   └── doctype/
 │       ├── shopify_store/
 │       ├── shopify_store_warehouse_mapping/
@@ -359,6 +421,7 @@ nexwave_shopify_connector/
 │       ├── shopify_store_item_filter/
 │       ├── shopify_store_tax_account/
 │       ├── shopify_store_webhook/
+│       ├── shopify_store_payment_method_mapping/
 │       └── item_shopify_store/
 └── fixtures/
     └── custom_field.json  # Custom fields for Item, Customer, SO, DN, SI
