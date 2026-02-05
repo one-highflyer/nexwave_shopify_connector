@@ -5,6 +5,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe.utils import flt
 
 from nexwave_shopify_connector.nexwave_shopify.order import _get_item_price
+from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
 
 
 class TestGetItemPrice(FrappeTestCase):
@@ -117,3 +118,74 @@ class TestGetItemPrice(FrappeTestCase):
 		rate = _get_item_price(line_item, taxes_inclusive=False)
 
 		self.assertEqual(flt(rate * 3, 2), 30.00)
+
+
+class TestSanitizePhoneNumber(FrappeTestCase):
+	"""Test sanitize_phone_number for Shopify phone variations."""
+
+	def test_extension_with_ext(self):
+		"""Phone with 'ext 651' should strip alphabetic chars."""
+		sanitized, original = sanitize_phone_number("09 836 7700 ext 651")
+		self.assertEqual(sanitized, "09 836 7700 651")
+		self.assertEqual(original, "09 836 7700 ext 651")
+
+	def test_extension_with_x(self):
+		"""Phone with 'x100' should strip the 'x'."""
+		sanitized, original = sanitize_phone_number("+1-555-1234 x100")
+		self.assertEqual(sanitized, "+1-555-1234 100")
+		self.assertEqual(original, "+1-555-1234 x100")
+
+	def test_alphabetic_phone(self):
+		"""Phone with alphabetic chars like '1-800-FLOWERS' should strip letters."""
+		sanitized, original = sanitize_phone_number("1-800-FLOWERS")
+		self.assertEqual(sanitized, "1-800-")
+		self.assertEqual(original, "1-800-FLOWERS")
+
+	def test_too_long(self):
+		"""Phone exceeding 20 chars should be truncated."""
+		sanitized, original = sanitize_phone_number("+64 21 123 456 extension 789")
+		self.assertIsNotNone(sanitized)
+		self.assertLessEqual(len(sanitized), 20)
+		self.assertEqual(original, "+64 21 123 456 extension 789")
+
+	def test_already_valid(self):
+		"""Valid phone should pass through unchanged."""
+		sanitized, original = sanitize_phone_number("+64 21 123 456")
+		self.assertEqual(sanitized, "+64 21 123 456")
+		self.assertIsNone(original)
+
+	def test_none_input(self):
+		"""None input should return (None, None)."""
+		sanitized, original = sanitize_phone_number(None)
+		self.assertIsNone(sanitized)
+		self.assertIsNone(original)
+
+	def test_empty_string(self):
+		"""Empty string should return (None, None)."""
+		sanitized, original = sanitize_phone_number("")
+		self.assertIsNone(sanitized)
+		self.assertIsNone(original)
+
+	def test_only_invalid_chars(self):
+		"""Phone with only invalid chars should return None for sanitized."""
+		sanitized, original = sanitize_phone_number("ext")
+		self.assertIsNone(sanitized)
+		self.assertEqual(original, "ext")
+
+	def test_whitespace_only(self):
+		"""Whitespace-only string should return (None, None)."""
+		sanitized, original = sanitize_phone_number("   ")
+		self.assertIsNone(sanitized)
+		self.assertIsNone(original)
+
+	def test_hash_extension(self):
+		"""Phone with '#651' extension should keep # (it's allowed)."""
+		sanitized, original = sanitize_phone_number("09 836 7700 #651")
+		self.assertEqual(sanitized, "09 836 7700 #651")
+		self.assertIsNone(original)
+
+	def test_parentheses_preserved(self):
+		"""Parentheses in phone should be preserved."""
+		sanitized, original = sanitize_phone_number("(09) 836 7700")
+		self.assertEqual(sanitized, "(09) 836 7700")
+		self.assertIsNone(original)

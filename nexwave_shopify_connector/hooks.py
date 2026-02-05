@@ -44,6 +44,8 @@ fixtures = [
 				"Sales Invoice-shopify_order_id",
 				"Sales Invoice-shopify_order_number",
 				"Sales Invoice-shopify_customer_note",
+				# Contact Phone fields
+				"Contact Phone-shopify_original_phone",
 			]]
 		]
 	}

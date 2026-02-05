@@ -226,5 +226,16 @@
 		"insert_after": "discount_amount",
 		"label": "Shopify Item Discount",
 		"read_only": 1
+	},
+	{
+		"doctype": "Custom Field",
+		"name": "Contact Phone-shopify_original_phone",
+		"dt": "Contact Phone",
+		"fieldname": "shopify_original_phone",
+		"fieldtype": "Data",
+		"insert_after": "phone",
+		"label": "Shopify Original Phone",
+		"read_only": 1,
+		"description": "Original phone from Shopify (stored when sanitization was required)"
 	}
 ]

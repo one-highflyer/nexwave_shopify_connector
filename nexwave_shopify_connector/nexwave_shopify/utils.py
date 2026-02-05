@@ -2,6 +2,8 @@
 # For license information, please see license.txt
 
 import json
+import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import frappe
@@ -9,6 +11,57 @@ from frappe import _
 
 if TYPE_CHECKING:
 	from frappe.model.document import Document
+
+logger = logging.getLogger(__name__)
+
+# Frappe's phone validation allows: digits, space, +, _, -, comma, period, *, #, parentheses
+# Max length: 20 characters
+_PHONE_DISALLOWED_RE = re.compile(r"[^0-9 +_\-,.*#()]")
+_PHONE_MAX_LENGTH = 20
+
+
+def sanitize_phone_number(raw_phone: str | None) -> tuple[str | None, str | None]:
+	"""Sanitize a phone number to comply with Frappe's phone validation.
+
+	Frappe's validate_phone_number() uses regex [0-9 +_\\-,.*#()] with max 20 chars.
+	This strips disallowed characters (e.g. "ext", alphabetic chars) and truncates.
+
+	Args:
+		raw_phone: Raw phone number string from Shopify.
+
+	Returns:
+		Tuple of (sanitized_phone, original_if_modified):
+		- sanitized_phone: Cleaned phone, or None if empty after cleaning.
+		- original_if_modified: Original string only when data was actually
+		  stripped/truncated; None if no changes were needed.
+	"""
+	if not raw_phone:
+		return None, None
+
+	raw_phone = raw_phone.strip()
+	if not raw_phone:
+		return None, None
+
+	cleaned = _PHONE_DISALLOWED_RE.sub("", raw_phone)
+	# Collapse runs of whitespace that may result from stripping inner chars
+	cleaned = " ".join(cleaned.split())
+	# Truncate to Frappe's max length
+	cleaned = cleaned[:_PHONE_MAX_LENGTH].rstrip()
+
+	modified = cleaned != raw_phone
+
+	if modified:
+		logger.info(
+			"Phone number sanitized: %r -> %r",
+			raw_phone,
+			cleaned or "(empty)",
+		)
+
+	if not cleaned:
+		return None, raw_phone if modified else None
+
+	return cleaned, raw_phone if modified else None
+
 
 def create_shopify_log(
 	status: str = "Queued",
