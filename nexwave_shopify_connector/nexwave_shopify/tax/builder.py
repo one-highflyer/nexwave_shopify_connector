@@ -211,13 +211,18 @@ class TaxBuilder:
 
 	def _collect_unique_tax_types(self) -> dict:
 		"""
-		Collect unique tax types from line items.
+		Collect unique tax types from line items and shipping lines.
+
+		When add_shipping_as_item is True, shipping taxes are also collected
+		so that a GST "On Net Total" row is created even when all line items
+		are zero-rated.
 
 		Returns:
 		    Dict mapping tax_title to {rate, account} info
 		"""
 		tax_types = {}
 
+		# Collect from line items
 		for line_item in self.order.get("line_items", []):
 			for tax_line in line_item.get("tax_lines", []):
 				title = tax_line.get("title")
@@ -225,6 +230,17 @@ class TaxBuilder:
 
 				if title not in tax_types:
 					tax_types[title] = {"rate": rate, "title": title}
+
+		# Also collect from shipping lines when shipping is added as item
+		# (shipping tax will be applied via "On Net Total" row)
+		if self.store.add_shipping_as_item:
+			for shipping in self.order.get("shipping_lines", []):
+				for tax_line in shipping.get("tax_lines", []):
+					title = tax_line.get("title")
+					rate = flt(tax_line.get("rate")) * 100
+
+					if title not in tax_types:
+						tax_types[title] = {"rate": rate, "title": title}
 
 		self.logger.debug("Unique tax types found: %s", list(tax_types.keys()))
 		return tax_types
@@ -307,10 +323,10 @@ class TaxBuilder:
 			return self.store.default_sales_tax_account
 
 		frappe.throw(
-			_("Tax Account not configured for Shopify tax '{0}' in store '{1}'. "
-			  "Configure tax_accounts mapping or set default_sales_tax_account.").format(
-				tax_title, self.store.name
-			)
+			_(
+				"Tax Account not configured for Shopify tax '{0}' in store '{1}'. "
+				"Configure tax_accounts mapping or set default_sales_tax_account."
+			).format(tax_title, self.store.name)
 		)
 
 	def _process_shipping(self):

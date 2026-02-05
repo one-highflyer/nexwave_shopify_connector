@@ -507,6 +507,53 @@ class TestTaxBuilder(FrappeTestCase):
 		# Should have On Previous Row Amount for GST on shipping
 		self.assertIn("On Previous Row Amount", charge_types)
 
+	def test_zero_rated_items_with_taxable_shipping_as_item(self):
+		"""
+		Test that GST row is created when all items are zero-rated but shipping is taxable.
+
+		This is an edge case where:
+		- All line items are zero-rated (taxable=False, no tax_lines)
+		- Shipping has tax_lines (taxable shipping)
+		- add_shipping_as_item=True
+
+		Expected: GST "On Net Total" row should still be created from shipping tax_lines.
+		"""
+		from nexwave_shopify_connector.nexwave_shopify.tax.builder import TaxBuilder
+
+		# Order: all zero-rated items, taxable shipping
+		order = create_test_shopify_order(
+			line_items=[
+				{"sku": "ZERO-001", "taxable": False, "tax_lines": []},
+			],
+			shipping_lines=[
+				{
+					"price": "10.00",
+					"title": "Standard Shipping",
+					"tax_lines": [{"title": "GST", "rate": 0.15, "price": "1.50"}],
+				}
+			],
+		)
+
+		store = get_test_store()
+		store.add_shipping_as_item = True
+		store.shipping_item = "SHIPPING"
+
+		items = [{"item_code": "ZERO-001", "delivery_date": "2026-02-05"}]
+
+		builder = TaxBuilder(order, store, items)
+		tax_rows = builder.build()
+
+		# Should have GST "On Net Total" row created from shipping tax_lines
+		self.assertGreaterEqual(len(tax_rows), 1, "Expected at least one tax row for shipping GST")
+
+		# Verify GST row exists with correct type
+		on_net_total_rows = [r for r in tax_rows if r["charge_type"] == "On Net Total"]
+		self.assertEqual(len(on_net_total_rows), 1, "Expected one 'On Net Total' GST row")
+
+		# Shipping should be added as item
+		shipping_items = [i for i in items if i.get("item_code") == "SHIPPING"]
+		self.assertEqual(len(shipping_items), 1, "Shipping item should be added")
+
 
 class TestRoundingAdjuster(FrappeTestCase):
 	"""Tests for rounding adjustment functionality."""
