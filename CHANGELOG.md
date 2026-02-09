@@ -1,3 +1,10 @@
+## [1.9.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.1...v1.9.2) (2026-02-09)
+
+
+### Bug Fixes
+
+* **order:** use store's price list when creating Sales Order ([8e35a8e](https://github.com/one-highflyer/nexwave_shopify_connector/commit/8e35a8e0ff7cdb469592614c0afe8aaa255eabf5))
+
 ## [1.9.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.0...v1.9.1) (2026-02-05)
 
 
