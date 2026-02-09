@@ -1157,6 +1157,7 @@ def _create_sales_order(
 			"delivery_date": getdate(order.get("created_at")) or nowdate(),
 			"company": store.company,
 			"cost_center": store.cost_center,
+			"selling_price_list": store.price_list,
 			"ignore_pricing_rule": 1,
 			"items": items,
 			"taxes": taxes,
