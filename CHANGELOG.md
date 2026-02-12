@@ -1,3 +1,10 @@
+## [1.9.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.2...v1.9.3) (2026-02-12)
+
+
+### Bug Fixes
+
+* **order:** use customer display name for address title fallback ([91f747b](https://github.com/one-highflyer/nexwave_shopify_connector/commit/91f747b96ab7b6b78cfaeff8f618aadfdea07ea0))
+
 ## [1.9.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.1...v1.9.2) (2026-02-09)
 
 
