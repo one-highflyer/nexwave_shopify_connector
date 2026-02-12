@@ -938,7 +938,12 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		return None
 
 	# Build address fields
-	address_title = cstr(address_data.get("name") or customer_name).strip()
+	# Use Shopify address "name" first; fall back to Customer display name (not doc name,
+	# which can be a numeric ID for imported customers)
+	shopify_addr_name = cstr(address_data.get("name")).strip()
+	if not shopify_addr_name:
+		shopify_addr_name = frappe.db.get_value("Customer", customer_name, "customer_name") or customer_name
+	address_title = shopify_addr_name
 	address_line1 = cstr(address_data.get("address1", "")).strip() or "-"
 	city = cstr(address_data.get("city", "")).strip() or "-"
 	country = cstr(address_data.get("country", "")).strip()

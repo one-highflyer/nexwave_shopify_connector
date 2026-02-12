@@ -1,10 +1,11 @@
 # Copyright (c) 2025, HighFlyer and Contributors
 # See license.txt
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import flt
 
-from nexwave_shopify_connector.nexwave_shopify.order import _get_item_price
+from nexwave_shopify_connector.nexwave_shopify.order import _create_or_update_address, _get_item_price
 from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
 
 
@@ -194,3 +195,71 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 		sanitized, original = sanitize_phone_number("(09) 836 7700")
 		self.assertEqual(sanitized, "(09) 836 7700")
 		self.assertIsNone(original)
+
+
+class TestCreateOrUpdateAddress(FrappeTestCase):
+	"""Test _create_or_update_address address_title fallback logic."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		# Create a test customer with a numeric-style doc name
+		if not frappe.db.exists("Customer", {"customer_name": "_Test Shopify Address Customer"}):
+			cls.customer = frappe.get_doc({
+				"doctype": "Customer",
+				"customer_name": "_Test Shopify Address Customer",
+				"customer_group": frappe.db.get_single_value("Selling Settings", "customer_group"),
+				"territory": frappe.db.get_single_value("Selling Settings", "territory"),
+			})
+			cls.customer.insert(ignore_permissions=True)
+		else:
+			cls.customer = frappe.get_doc("Customer", {"customer_name": "_Test Shopify Address Customer"})
+		cls.created_addresses = []
+
+	@classmethod
+	def tearDownClass(cls):
+		for addr_name in cls.created_addresses:
+			frappe.delete_doc("Address", addr_name, ignore_permissions=True, force=True)
+		frappe.delete_doc("Customer", cls.customer.name, ignore_permissions=True, force=True)
+		super().tearDownClass()
+
+	def test_address_title_uses_shopify_name_when_present(self):
+		"""When Shopify address has a 'name' field, use it as address_title."""
+		address_data = {
+			"name": "Jane Doe",
+			"address1": "10 Test Street",
+			"city": "Auckland",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "Jane Doe")
+
+	def test_address_title_falls_back_to_customer_display_name(self):
+		"""When Shopify address has no 'name', use Customer display name (not doc name)."""
+		address_data = {
+			"address1": "20 Fallback Road",
+			"city": "Wellington",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Shipping")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "_Test Shopify Address Customer")
+
+	def test_address_title_falls_back_with_empty_name(self):
+		"""When Shopify address 'name' is empty string, use Customer display name."""
+		address_data = {
+			"name": "",
+			"address1": "30 Empty Name Ave",
+			"city": "Christchurch",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "_Test Shopify Address Customer")
