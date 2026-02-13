@@ -692,8 +692,17 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None, str | None, str
 	)
 
 	if not customer_id:
-		# No customer in order - use default customer
-		logger.warning("No customer in order, using default customer: %s", store.default_customer)
+		# No customer in order (e.g. Shopify POS) - use default customer
+		if not store.default_customer:
+			frappe.throw(
+				_(
+					"Shopify order {0} has no customer data (e.g. POS order) and no Default Customer "
+					"is configured on Shopify Store '{1}'. Please set a Default Customer in the "
+					"Shopify Store settings to handle guest/POS orders."
+				).format(order.get("name") or order.get("id"), store.name)
+			)
+
+		logger.info("No customer in order, using default customer: %s", store.default_customer)
 		customer_name = store.default_customer
 		# Still create contact from billing address if available
 		billing_address = order.get("billing_address") or {}
