@@ -1,3 +1,10 @@
+## [1.9.4](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.3...v1.9.4) (2026-02-13)
+
+
+### Bug Fixes
+
+* **order:** validate default customer before creating Sales Order for guest/POS orders ([206e6ee](https://github.com/one-highflyer/nexwave_shopify_connector/commit/206e6eee5ab86f65ee725e2774417313b621b402))
+
 ## [1.9.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.2...v1.9.3) (2026-02-12)
 
 
