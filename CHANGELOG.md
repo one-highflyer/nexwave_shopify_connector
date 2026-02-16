@@ -1,3 +1,11 @@
+## [1.9.5](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.4...v1.9.5) (2026-02-16)
+
+
+### Bug Fixes
+
+* **order:** break long transactions into committed phases to prevent deadlocks ([c49e05d](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c49e05d64609eaa32b6bf333bf60c1d0fe03cfaf))
+* **order:** distinguish Phase 6 skip vs failure and refresh stale docstatus ([9aad522](https://github.com/one-highflyer/nexwave_shopify_connector/commit/9aad522517852020d8e476a23bb1a2ed8486369c))
+
 ## [1.9.4](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.3...v1.9.4) (2026-02-13)
 
 
