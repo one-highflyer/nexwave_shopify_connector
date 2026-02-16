@@ -30,6 +30,12 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 
 	This is the shared function used by both webhook handlers and manual sync.
 
+	Each phase (customer sync, SO creation, SO submission, invoice, payment,
+	fulfillment) commits independently to prevent long-running transactions
+	that cause database deadlocks under concurrent load. A failure in a later
+	phase leaves earlier phases committed (partial state is acceptable — e.g.
+	an SO without an SI is a normal ERPNext state).
+
 	Args:
 		order: Shopify order data (dict)
 		store: Shopify Store document
@@ -55,11 +61,13 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 		logger.info("Order already exists, skipping: %s", order.get("id"))
 		return None
 
-	# Sync customer and addresses
+	# Phase 1: Sync customer and addresses
 	customer_name, contact_name, billing_addr, shipping_addr = _sync_customer(order, store)
+	frappe.db.commit()
 
-	# Create Sales Order
+	# Phase 2: Create Sales Order
 	so = _create_sales_order(order, store, customer_name, contact_name, billing_addr, shipping_addr)
+	frappe.db.commit()
 
 	logger.info(
 		"Sales Order created: %s for Shopify Order ID: %s, financial status: %s",
@@ -70,34 +78,54 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 
 	# Handle prepaid orders
 	if order.get("financial_status") == "paid" and store.auto_submit_sales_order:
+		# Phase 3: Submit Sales Order
+		so.reload()  # Refresh after Phase 2 commit for check_if_latest()
 		so.submit()
+		frappe.db.commit()
 		logger.info("Sales Order submitted: %s for Shopify Order ID: %s", so.name, order.get("id"))
 
 		if store.auto_create_invoice:
+			# Phase 4: Create and submit Sales Invoice
+			so.reload()  # Refresh docstatus (now 1) after Phase 3 commit — needed for _create_sales_invoice guard check
 			si = _create_sales_invoice(so, order, store)
-			logger.info("Sales Invoice created: %s for Shopify Order ID: %s", si.name, order.get("id"))
+			if si:
+				frappe.db.commit()
+				logger.info("Sales Invoice created: %s for Shopify Order ID: %s", si.name, order.get("id"))
+			else:
+				logger.info(
+					"Sales Invoice not created for Shopify Order ID: %s — invoice may already exist "
+					"or SO %s is not submitted/already billed",
+					order.get("id"),
+					so.name,
+				)
 
 			if store.auto_create_payment_entry and si and si.grand_total > 0:
+				# Phase 5: Create Payment Entries
 				_create_payment_entries(si, order, store, getdate(order.get("created_at")))
+				frappe.db.commit()
 				logger.info("Payment Entry created for Shopify Order ID: %s", order.get("id"))
 
-		# Auto-create Delivery Notes if order is already fulfilled
+		# Auto-create Delivery Notes if order is already fulfilled (best-effort, non-blocking)
 		if store.enable_webhook_fulfillment and order.get("fulfillment_status") == "fulfilled":
 			try:
+				# Phase 6: Create Delivery Notes
 				result = create_delivery_notes_from_fulfillments(order, store)
 				if result.get("created"):
+					frappe.db.commit()
 					logger.info(
 						"Auto-created Delivery Notes for pre-fulfilled order %s: %s",
 						order.get("id"),
 						result["created"],
 					)
 				else:
+					frappe.db.rollback()
 					logger.warning(
 						"Failed to auto-create Delivery Notes for pre-fulfilled order %s: %s",
 						order.get("id"),
 						result.get("message"),
 					)
 			except Exception as e:
+				frappe.db.rollback()
 				logger.error(
 					"Failed to auto-create Delivery Notes for order %s: %s",
 					order.get("id"),
@@ -214,13 +242,14 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 			str(e),
 			exc_info=True,
 		)
+		frappe.db.rollback()
 		create_shopify_log(
 			status="Error",
 			exception=frappe.get_traceback(),
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.rollback()
+		frappe.db.commit()
 		raise
 
 
@@ -229,6 +258,10 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 	Webhook handler for orders/paid event.
 
 	For COD orders that are now paid - submits SO and creates SI/PE.
+
+	Each phase (financial status update, SO submission, invoice+payment) commits
+	independently to prevent long-running transactions that cause database
+	deadlocks under concurrent load.
 
 	Args:
 		payload: Shopify order data
@@ -294,28 +327,33 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 			so.per_billed,
 		)
 
-		# Update financial status
+		# Phase A: Update financial status
 		frappe.db.set_value("Sales Order", so_name, "shopify_financial_status", "paid")
+		frappe.db.commit()
 		logger.info("[orders/paid] Updated financial status to 'paid' for SO %s", so_name)
 
-		# Submit if draft and auto-submit enabled
+		# Phase B: Submit if draft and auto-submit enabled
 		if so.docstatus == 0 and store.auto_submit_sales_order:
 			so.reload()
 			so.submit()
+			frappe.db.commit()
 			logger.info("[orders/paid] Submitted Sales Order %s", so.name)
 		elif so.docstatus == 0:
 			logger.info("[orders/paid] SO %s is draft but auto_submit is disabled", so.name)
 
-		# Create invoice if enabled and SO is submitted
+		# Phase C: Create invoice if enabled and SO is submitted
 		if store.auto_create_invoice and so.docstatus == 1 and not so.per_billed:
+			so.reload()  # Refresh docstatus and modified after Phase B commit
 			logger.info("[orders/paid] Creating Sales Invoice for SO %s", so.name)
 			si = _create_sales_invoice(so, order, store)
 
 			if si:
+				frappe.db.commit()
 				logger.info("[orders/paid] Created Sales Invoice %s", si.name)
 				if store.auto_create_payment_entry and si.grand_total > 0:
 					logger.info("[orders/paid] Creating Payment Entry for SI %s", si.name)
 					_create_payment_entries(si, order, store, getdate(order.get("created_at")))
+					frappe.db.commit()
 			else:
 				logger.info("[orders/paid] Sales Invoice already exists or could not be created")
 		elif not store.auto_create_invoice:
@@ -344,13 +382,14 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 			str(e),
 			exc_info=True,
 		)
+		frappe.db.rollback()
 		create_shopify_log(
 			status="Error",
 			exception=frappe.get_traceback(),
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.rollback()
+		frappe.db.commit()
 		raise
 
 
@@ -472,13 +511,14 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 			str(e),
 			exc_info=True,
 		)
+		frappe.db.rollback()
 		create_shopify_log(
 			status="Error",
 			exception=frappe.get_traceback(),
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.rollback()
+		frappe.db.commit()
 		raise
 
 
@@ -599,6 +639,7 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 						logger.info("Order skipped: %s for Shopify Store: %s", order.id, shopify_store)
 				except Exception as e:
 					errors += 1
+					frappe.db.rollback()
 					create_shopify_log(
 						status="Error",
 						message=str(e),
@@ -614,6 +655,7 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 						reference_doctype="Shopify Store",
 						reference_name=shopify_store,
 					)
+					frappe.db.commit()
 					logger.error(
 						"Error processing order: %s for Shopify Store: %s, Error: %s",
 						order.id,
