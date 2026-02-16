@@ -117,10 +117,18 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 						order.get("id"),
 						result["created"],
 					)
-				else:
+				elif result.get("failed"):
 					frappe.db.rollback()
 					logger.warning(
 						"Failed to auto-create Delivery Notes for pre-fulfilled order %s: %s",
+						order.get("id"),
+						result.get("message"),
+					)
+				else:
+					# Legitimate skip (no fulfillments, already exists, SO not submitted, etc.)
+					frappe.db.commit()
+					logger.info(
+						"Skipped Delivery Note creation for pre-fulfilled order %s: %s",
 						order.get("id"),
 						result.get("message"),
 					)
@@ -333,8 +341,8 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 		logger.info("[orders/paid] Updated financial status to 'paid' for SO %s", so_name)
 
 		# Phase B: Submit if draft and auto-submit enabled
+		so.reload()  # Refresh docstatus after Phase A commit (may have been submitted by concurrent webhook)
 		if so.docstatus == 0 and store.auto_submit_sales_order:
-			so.reload()
 			so.submit()
 			frappe.db.commit()
 			logger.info("[orders/paid] Submitted Sales Order %s", so.name)
