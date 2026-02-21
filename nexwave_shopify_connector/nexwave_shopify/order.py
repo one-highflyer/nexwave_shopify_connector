@@ -232,6 +232,7 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 				status="Success",
 				message=f"Created Sales Order {so_name}",
 				shopify_store=shopify_store,
+				request_data=payload,
 				reference_doctype="Sales Order",
 				reference_name=so_name,
 			)
