@@ -5,7 +5,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from shopify.api_version import ApiVersion
-from shopify.resources import CustomCollection, Location, Shop, SmartCollection
+from shopify.collection import PaginatedIterator
+from shopify.resources import CustomCollection, Location, Product, Shop, SmartCollection
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import (
@@ -310,9 +311,129 @@ class ShopifyStore(Document):
 
 	@frappe.whitelist()
 	def fetch_products_and_map_by_sku(self):
-		"""Fetch products from Shopify and auto-map by SKU."""
-		# TODO: Implement SKU matching logic
-		frappe.msgprint(_("Fetching products and mapping by SKU..."))
+		"""Fetch products from Shopify and auto-map by SKU to ERPNext Items.
+
+		Iterates all Shopify products (paginated), matches each variant's SKU
+		against ERPNext item_code, and creates or updates Item Shopify Store rows.
+		"""
+		logger = get_logger()
+		logger.info("Fetching products and mapping by SKU for store: %s", self.shop_domain)
+
+		try:
+			self._init_shopify_api_versions()
+			auth_details = self._get_auth_details()
+
+			# Build upfront set of valid item_codes — single DB round-trip
+			erpnext_skus = _build_erpnext_sku_set()
+			logger.info(
+				"Built ERPNext SKU set with %d entries for store: %s",
+				len(erpnext_skus),
+				self.shop_domain,
+			)
+
+			total_variants = 0
+			skipped_no_sku = 0
+			not_found = 0
+			updated = 0
+			created = 0
+			errors = 0
+
+			with Session.temp(*auth_details):
+				products_iter = PaginatedIterator(Product.find(limit=250))
+
+				for products_batch in products_iter:
+					for product in products_batch:
+						for variant in product.variants:
+							total_variants += 1
+							sku = (variant.sku or "").strip()
+
+							if not sku:
+								skipped_no_sku += 1
+								continue
+
+							if sku not in erpnext_skus:
+								not_found += 1
+								logger.info(
+									"SKU '%s' (product %s, variant %s) not found in ERPNext",
+									sku,
+									product.id,
+									variant.id,
+								)
+								continue
+
+							try:
+								action = _upsert_item_store_mapping(
+									item_code=sku,
+									store_name=self.name,
+									product_id=str(product.id),
+									variant_id=str(variant.id),
+									sku=sku,
+								)
+								if action == "updated":
+									updated += 1
+								else:
+									created += 1
+							except Exception:
+								errors += 1
+								frappe.db.rollback()
+								logger.error(
+									"Failed to map SKU '%s'",
+									sku,
+									exc_info=True,
+								)
+								frappe.log_error(
+									message=frappe.get_traceback(),
+									title=_("SKU Mapping Error - {0}").format(self.shop_domain),
+								)
+								frappe.db.commit()
+
+			matched = updated + created
+			message = _("SKU mapping complete.") + "<br><br>"
+			message += _("<b>Total Shopify variants scanned:</b> {0}").format(total_variants) + "<br>"
+			message += _("<b>Matched to NexWave items:</b> {0}").format(matched) + "<br>"
+			message += _("<b>&nbsp;&nbsp;— Updated existing:</b> {0}").format(updated) + "<br>"
+			message += _("<b>&nbsp;&nbsp;— Created new:</b> {0}").format(created) + "<br>"
+			message += _("<b>Skipped (no SKU on Shopify):</b> {0}").format(skipped_no_sku) + "<br>"
+			message += _("<b>Not found in NexWave:</b> {0}").format(not_found) + "<br>"
+			message += _("<b>Errors:</b> {0}").format(errors)
+
+			if errors > 0:
+				message += "<br><br>" + _("Check Error Log for details on failed mappings.")
+
+			logger.info(
+				"SKU mapping complete for store %s: matched=%d, updated=%d, created=%d, "
+				"skipped_no_sku=%d, not_found=%d, errors=%d",
+				self.shop_domain,
+				matched,
+				updated,
+				created,
+				skipped_no_sku,
+				not_found,
+				errors,
+			)
+
+			frappe.msgprint(
+				message,
+				title=_("Shopify SKU Mapping"),
+				indicator="green" if errors == 0 else "orange",
+			)
+
+		except Exception as e:
+			logger.error(
+				"Failed to fetch products and map by SKU for store: %s, error: %s",
+				self.shop_domain,
+				str(e),
+				exc_info=True,
+			)
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("Fetch Products & Map by SKU Failed - {0}").format(self.shop_domain),
+			)
+			frappe.db.commit()
+			frappe.throw(
+				_("Failed to fetch products and map by SKU: {0}").format(str(e)),
+				title=_("Shopify Error"),
+			)
 
 	@frappe.whitelist()
 	def sync_all_items(self):
@@ -616,3 +737,74 @@ class ShopifyStore(Document):
 			)
 			frappe.db.commit()
 			frappe.throw(_("Failed to fetch webhooks: {0}").format(str(e)))
+
+
+def _build_erpnext_sku_set() -> set[str]:
+	"""Build a set of all non-disabled item_code values for O(1) SKU lookups.
+
+	The Shopify connector uses item_code as SKU (product.py build_product_payload),
+	so a matching SKU string is itself the item_code -- no key-to-value mapping needed.
+	"""
+	return set(
+		frappe.get_all("Item", filters={"disabled": 0}, pluck="item_code")
+	)
+
+
+def _upsert_item_store_mapping(
+	item_code: str,
+	store_name: str,
+	product_id: str,
+	variant_id: str,
+	sku: str,
+) -> str:
+	"""Create or update an Item Shopify Store mapping row for a specific variant.
+
+	Update priority (single pass over shopify_stores):
+	1. Exact match on store + variant_id -> update in place
+	2. Existing row for this store with no variant_id (blank stub) -> claim it
+	3. No row exists -> append a new row
+
+	Returns:
+		"updated" or "created"
+	"""
+	item = frappe.get_doc("Item", item_code)
+
+	update_data = {
+		"shopify_product_id": product_id,
+		"shopify_variant_id": variant_id,
+		"shopify_sku": sku,
+	}
+
+	# Single pass: find exact match or blank stub
+	exact_row = None
+	blank_row = None
+	for row in getattr(item, "shopify_stores", []) or []:
+		if row.shopify_store != store_name:
+			continue
+		if row.shopify_variant_id == variant_id:
+			exact_row = row
+			break  # Priority 1 found, no need to continue
+		if not row.shopify_variant_id and not blank_row:
+			blank_row = row
+
+	existing_row = exact_row or blank_row
+	if existing_row:
+		frappe.db.set_value(
+			"Item Shopify Store", existing_row.name, update_data, update_modified=False
+		)
+		return "updated"
+
+	# No suitable row -- create new
+	item.reload()
+	item.append(
+		"shopify_stores",
+		{
+			"shopify_store": store_name,
+			"enabled": 1,
+			**update_data,
+		},
+	)
+	item.flags.ignore_validate = True
+	item.flags.ignore_mandatory = True
+	item.save(ignore_permissions=True)
+	return "created"

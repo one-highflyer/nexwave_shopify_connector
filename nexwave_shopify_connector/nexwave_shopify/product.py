@@ -507,7 +507,7 @@ def build_product_payload(item, store) -> tuple:
 	"""
 	product_data = {"title": item.item_name or item.name}
 	variant_data = {
-		"sku": item.name,  # Use item_code as SKU (matches ecommerce_integrations pattern)
+		"sku": item.item_code,
 	}
 	metafields_data = []
 	category_value = None
