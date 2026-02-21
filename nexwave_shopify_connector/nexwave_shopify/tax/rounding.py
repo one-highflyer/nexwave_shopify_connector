@@ -23,7 +23,7 @@ def apply_rounding_adjustment(so, shopify_order: dict, store=None) -> float:
 	Apply rounding adjustment to Sales Order after save.
 
 	Compares the Shopify total_price with ERPNext's calculated grand_total.
-	If there's a difference (> $0.01), adds an adjustment row using the
+	If there's a difference (>= $0.01), adds an adjustment row using the
 	store's write_off_account (if configured) or the company's write_off_account.
 
 	Args:
@@ -40,8 +40,8 @@ def apply_rounding_adjustment(so, shopify_order: dict, store=None) -> float:
 	erpnext_total = flt(so.grand_total)
 	difference = flt(shopify_total - erpnext_total, 2)
 
-	# Skip if difference is negligible (< 1 cent)
-	tolerance = 0.01
+	# Skip if difference is zero (within floating-point precision)
+	tolerance = 0.005
 	if abs(difference) <= tolerance:
 		logger.debug(
 			"No rounding adjustment needed for SO %s: Shopify=%s, ERPNext=%s",
