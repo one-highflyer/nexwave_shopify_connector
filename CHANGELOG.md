@@ -1,3 +1,15 @@
+# [1.10.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.5...v1.10.0) (2026-02-21)
+
+
+### Bug Fixes
+
+* **order:** lower rounding tolerance so 0.01 discrepancies get written off ([6a2298a](https://github.com/one-highflyer/nexwave_shopify_connector/commit/6a2298a5f936ab86fecbb28c46bf7aed278f0cc7))
+
+
+### Features
+
+* **order:** store Shopify order payload in log on SO creation ([87594b8](https://github.com/one-highflyer/nexwave_shopify_connector/commit/87594b856c78b529548f275481e3bdbdf2ff62a1))
+
 ## [1.9.5](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.4...v1.9.5) (2026-02-16)
 
 
