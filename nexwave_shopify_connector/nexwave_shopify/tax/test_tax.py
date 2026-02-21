@@ -621,7 +621,7 @@ class TestRoundingAdjuster(FrappeTestCase):
 		self.assertEqual(tax_row["tax_amount"], -0.50)
 
 	def test_tolerance_threshold(self):
-		"""Test that differences <= 0.01 are ignored."""
+		"""Test that 0.01 differences are adjusted (only sub-cent ignored)."""
 		from nexwave_shopify_connector.nexwave_shopify.tax.rounding import apply_rounding_adjustment
 
 		order = {"total_price": "100.01"}
@@ -629,9 +629,9 @@ class TestRoundingAdjuster(FrappeTestCase):
 
 		adjustment = apply_rounding_adjustment(so, order)
 
-		# 0.01 difference should be ignored
-		self.assertEqual(adjustment, 0.0)
-		so.append.assert_not_called()
+		# 0.01 difference should be written off
+		self.assertEqual(adjustment, 0.01)
+		so.append.assert_called_once()
 
 	def test_no_write_off_account_raises_error(self):
 		"""Test that missing write_off_account raises a clear error."""
