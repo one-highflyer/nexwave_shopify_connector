@@ -373,6 +373,7 @@ class ShopifyStore(Document):
 									updated += 1
 								else:
 									created += 1
+								frappe.db.commit()
 							except Exception:
 								errors += 1
 								frappe.db.rollback()
