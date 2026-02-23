@@ -1222,7 +1222,7 @@ def _create_sales_order(
 			"delivery_date": getdate(order.get("created_at")) or nowdate(),
 			"company": store.company,
 			"cost_center": store.cost_center,
-			"selling_price_list": store.price_list,
+			"selling_price_list": frappe.db.get_value("Customer", customer_name, "default_price_list") or store.price_list,
 			"ignore_pricing_rule": 1,
 			"items": items,
 			"taxes": taxes,
