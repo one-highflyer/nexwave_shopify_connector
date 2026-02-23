@@ -1,3 +1,16 @@
+# [1.11.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.10.0...v1.11.0) (2026-02-23)
+
+
+### Bug Fixes
+
+* **order:** use customer's default price list on Sales Order creation ([62c1a8e](https://github.com/one-highflyer/nexwave_shopify_connector/commit/62c1a8ed018a7dfdf1af3327dc11319c0514ef63))
+* **store:** commit each successful SKU mapping to prevent rollback loss ([cc74878](https://github.com/one-highflyer/nexwave_shopify_connector/commit/cc748780e6965af27ce1e46038502db1a53740e2))
+
+
+### Features
+
+* **store:** implement "Fetch Products & Map by SKU" for Shopify Store ([c6a368a](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c6a368ae2be38d8cace508b792226f7c1eb5b40d))
+
 # [1.10.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.9.5...v1.10.0) (2026-02-21)
 
 
