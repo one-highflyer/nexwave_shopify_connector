@@ -1,11 +1,13 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
+import time
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 import frappe
 from frappe import _
 from frappe.utils import add_to_date, now_datetime
+from pyactiveresource.connection import ClientError
 from shopify.api_version import ApiVersion
 from shopify.resources import InventoryLevel, Variant
 from shopify.session import Session
@@ -110,6 +112,7 @@ def sync_store_inventory(store_name: str):
 		return
 
 	sync_count = 0
+	skip_count = 0
 	error_count = 0
 
 	try:
@@ -119,31 +122,72 @@ def sync_store_inventory(store_name: str):
 			)
 			for item_data in items_to_sync:
 				try:
-					_sync_item_inventory(item_data, store)
-					sync_count += 1
+					synced = _sync_item_inventory(item_data, store)
+					if synced:
+						sync_count += 1
+					else:
+						skip_count += 1
 				except Exception as e:
-					logger.error(
-						"Failed to sync inventory for %s items for Shopify store: %s, error: %s",
-						item_data["item_code"],
-						store_name,
-						str(e),
-						exc_info=True,
-					)
-					error_count += 1
-					# Log individual item failure to NexWave Shopify Log
-					create_shopify_log(
-						status="Error",
-						method="sync_item_inventory",
-						shopify_store=store_name,
-						message=f"Failed to sync inventory for {item_data['item_code']}",
-						exception=str(e),
-						reference_doctype="Item",
-						reference_name=item_data["item_code"],
-						request_data={
-							"item_code": item_data["item_code"],
-							"shopify_variant_id": item_data.get("shopify_variant_id"),
-						},
-					)
+					if isinstance(e, ClientError) and e.code == 429:
+						retry_after = _get_retry_after(e)
+						logger.warning(
+							"Rate limited, retrying after %s seconds for %s",
+							retry_after,
+							item_data["item_code"],
+						)
+						time.sleep(retry_after)
+						try:
+							synced = _sync_item_inventory(item_data, store)
+							if synced:
+								sync_count += 1
+							else:
+								skip_count += 1
+						except Exception as retry_e:
+							logger.error(
+								"Retry failed for %s: %s",
+								item_data["item_code"],
+								str(retry_e),
+								exc_info=True,
+							)
+							error_count += 1
+							create_shopify_log(
+								status="Error",
+								method="sync_item_inventory",
+								shopify_store=store_name,
+								message=f"Failed to sync inventory for {item_data['item_code']} (after rate limit retry)",
+								exception=str(retry_e),
+								reference_doctype="Item",
+								reference_name=item_data["item_code"],
+								request_data={
+									"item_code": item_data["item_code"],
+									"shopify_variant_id": item_data.get("shopify_variant_id"),
+								},
+							)
+					else:
+						logger.error(
+							"Failed to sync inventory for %s for Shopify store: %s, error: %s",
+							item_data["item_code"],
+							store_name,
+							str(e),
+							exc_info=True,
+						)
+						error_count += 1
+						create_shopify_log(
+							status="Error",
+							method="sync_item_inventory",
+							shopify_store=store_name,
+							message=f"Failed to sync inventory for {item_data['item_code']}",
+							exception=str(e),
+							reference_doctype="Item",
+							reference_name=item_data["item_code"],
+							request_data={
+								"item_code": item_data["item_code"],
+								"shopify_variant_id": item_data.get("shopify_variant_id"),
+							},
+						)
+
+				# Rate limit: Shopify allows 2 calls/sec (leaky bucket 40/2s)
+				time.sleep(1.0)
 
 		# Update last sync time
 		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
@@ -164,12 +208,17 @@ def sync_store_inventory(store_name: str):
 			error_count,
 		)
 
+		summary_parts = [f"Synced inventory for {sync_count} items"]
+		if skip_count:
+			summary_parts.append(f"{skip_count} skipped (tracking disabled)")
+		if error_count:
+			summary_parts.append(f"{error_count} errors")
+
 		create_shopify_log(
 			status=status,
 			method="sync_store_inventory",
 			shopify_store=store_name,
-			message=f"Synced inventory for {sync_count} items"
-			+ (f" ({error_count} errors)" if error_count else ""),
+			message=", ".join(summary_parts),
 			reference_doctype="Shopify Store",
 			reference_name=store_name,
 		)
@@ -187,6 +236,21 @@ def sync_store_inventory(store_name: str):
 			reference_doctype="Shopify Store",
 			reference_name=store_name,
 		)
+
+
+def _get_retry_after(e: ClientError) -> float:
+	"""Extract Retry-After seconds from a 429 response, defaulting to 2.0."""
+	logger = get_logger()
+	headers = getattr(e.response, "headers", {})
+	# Case-insensitive lookup since headers are stored in a plain dict
+	for key, val in headers.items():
+		if key.lower() == "retry-after":
+			try:
+				return max(float(val), 1.0)
+			except (ValueError, TypeError):
+				logger.warning("Could not parse Retry-After header value: %r, defaulting to 2.0s", val)
+				break
+	return 2.0
 
 
 def _init_shopify_api_versions():
@@ -225,22 +289,36 @@ def get_items_with_shopify_ids(store_name: str) -> List[Dict]:
 	)
 
 
-def _sync_item_inventory(item_data: Dict, store):
+def _sync_item_inventory(item_data: Dict, store) -> bool:
 	"""
 	Sync inventory for a single item to all mapped Shopify locations.
 
 	Args:
 		item_data: Dict with item_code, shopify_variant_id
 		store: Shopify Store document
+
+	Returns:
+		True if inventory was synced, False if the item was skipped
 	"""
 	item_code = item_data["item_code"]
 	variant_id = item_data["shopify_variant_id"]
 	product_id = item_data["shopify_product_id"]
 
+	logger = get_logger()
+
 	# Get inventory_item_id from variant
 	variant = Variant.find(variant_id, product_id=product_id)
 	if not variant or not variant.inventory_item_id:
 		raise Exception(f"Could not get inventory_item_id for variant {variant_id}")
+
+	# Skip items that don't have inventory tracking enabled on Shopify
+	if variant.inventory_management != "shopify":
+		logger.warning(
+			"Skipping inventory sync for %s — inventory tracking not enabled on Shopify (variant %s)",
+			item_code,
+			variant_id,
+		)
+		return False
 
 	inventory_item_id = variant.inventory_item_id
 
@@ -257,6 +335,8 @@ def _sync_item_inventory(item_data: Dict, store):
 
 		# Update Shopify inventory level
 		_set_inventory_level(location_id, inventory_item_id, qty)
+
+	return True
 
 
 def get_stock_qty(item_code: str, warehouse: str) -> float:
