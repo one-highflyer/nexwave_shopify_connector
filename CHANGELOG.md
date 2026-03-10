@@ -1,3 +1,10 @@
+## [1.11.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.0...v1.11.1) (2026-03-10)
+
+
+### Bug Fixes
+
+* **inventory:** add rate limiting and skip untracked items during sync ([cd0a6e1](https://github.com/one-highflyer/nexwave_shopify_connector/commit/cd0a6e13b15476f1e1cbf563494cd2dbabe7e70c))
+
 # [1.11.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.10.0...v1.11.0) (2026-02-23)
 
 
