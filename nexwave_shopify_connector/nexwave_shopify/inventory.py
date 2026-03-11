@@ -88,6 +88,17 @@ def sync_store_inventory(store_name: str):
 		)
 		return
 
+	# Guard against duplicate jobs: with a single long-queue worker, duplicate
+	# jobs run sequentially. Re-check the sync interval with fresh DB data
+	# so that if a previous job already completed, this one skips.
+	if not _should_sync_inventory(store):
+		logger.info(
+			"Skipping inventory sync for %s, already synced at %s",
+			store_name,
+			store.last_inventory_sync,
+		)
+		return
+
 	# Initialize API versions
 	_init_shopify_api_versions()
 
