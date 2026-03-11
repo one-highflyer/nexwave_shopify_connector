@@ -1,3 +1,10 @@
+## [1.11.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.2...v1.11.3) (2026-03-11)
+
+
+### Bug Fixes
+
+* **inventory:** increase sync job timeout to 1 hour ([2f01a48](https://github.com/one-highflyer/nexwave_shopify_connector/commit/2f01a483e90ced002401c09830ad043dfbc5997c))
+
 ## [1.11.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.1...v1.11.2) (2026-03-11)
 
 
