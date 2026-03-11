@@ -41,7 +41,7 @@ def update_inventory_on_shopify():
 		frappe.enqueue(
 			"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 			queue="long",
-			timeout=1800,  # 30 minutes timeout for large inventories
+			timeout=3600,  # 1 hour timeout for large inventories
 			store_name=store_name,
 		)
 
@@ -476,7 +476,7 @@ def manual_inventory_sync(store_name: str):
 	frappe.enqueue(
 		"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 		queue="long",
-		timeout=1800,
+		timeout=3600,
 		store_name=store_name,
 	)
 
