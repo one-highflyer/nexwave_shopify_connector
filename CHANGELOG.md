@@ -1,3 +1,10 @@
+## [1.11.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.1...v1.11.2) (2026-03-11)
+
+
+### Bug Fixes
+
+* **inventory:** prevent duplicate sync jobs when store has no prior sync ([50d9761](https://github.com/one-highflyer/nexwave_shopify_connector/commit/50d97614c6d4d44e9724d214a351a414fcc93c0c))
+
 ## [1.11.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.0...v1.11.1) (2026-03-10)
 
 
