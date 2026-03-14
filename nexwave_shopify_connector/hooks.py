@@ -3,7 +3,7 @@ app_title = "NexWave Shopify Connector"
 app_publisher = "HighFlyer"
 app_description = "Multi-store Shopify connector for NexWave (ERPNext)"
 app_email = "imesha@highflyerglobal.com"
-app_license = "mit"
+app_license = "gpl-3.0"
 
 # Required Apps
 # ------------------
