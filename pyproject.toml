@@ -1,7 +1,7 @@
 [project]
 name = "nexwave_shopify_connector"
 authors = [
-    { name = "HighFlyer", email = "imesha@highflyerglobal.com"}
+    { name = "HighFlyer", email = "support@highflyerglobal.com"}
 ]
 description = "Multi-store Shopify connector for NexWave (ERPNext)"
 requires-python = ">=3.10"

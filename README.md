@@ -4,6 +4,17 @@ Multi-store Shopify connector for [NexWave](https://nexwaveapp.com)/ERPNext, des
 
 > Works with any ERPNext v15 instance. NexWave is HighFlyer's customized distribution of ERPNext for the New Zealand/Australia region, but this connector has no NexWave-specific dependencies.
 
+### Highlights
+
+- **Multi-store, multi-company** - Connect multiple Shopify stores to one ERPNext instance, each mapped to a separate company
+- **Real-time order sync** - Webhook-based order and fulfillment ingestion with HMAC validation
+- **Product and inventory push** - Sync items and stock levels from ERPNext to Shopify with multi-location support
+- **Configurable tax handling** - GST/VAT, zero-rated item detection, shipping tax, and automatic rounding adjustments
+- **OAuth 2.0 and legacy auth** - Supports both modern OAuth flow and legacy access tokens
+- **Collection mapping** - Automatically assign products to Shopify collections based on item group or brand
+- **Payment method mapping** - Map Shopify payment gateways to ERPNext Mode of Payment
+- **SKU-based migration tool** - Link existing Shopify products to ERPNext items by matching SKUs
+
 ## Overview
 
 ![Multi-Store Architecture](docs/multi-store-architecture.svg)
