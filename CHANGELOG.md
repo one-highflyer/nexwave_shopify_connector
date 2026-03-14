@@ -1,3 +1,10 @@
+## [1.11.4](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.3...v1.11.4) (2026-03-14)
+
+
+### Bug Fixes
+
+* add frappe-dependencies for Frappe Cloud marketplace ([58bbce7](https://github.com/one-highflyer/nexwave_shopify_connector/commit/58bbce72f10b45f27aab5bbc4d7c3b341c2d102f))
+
 ## [1.11.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.2...v1.11.3) (2026-03-11)
 
 
