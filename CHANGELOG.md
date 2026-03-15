@@ -1,3 +1,10 @@
+## [1.11.6](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.5...v1.11.6) (2026-03-15)
+
+
+### Bug Fixes
+
+* update semantic-release and CI to use version-15 branch ([f5bddc0](https://github.com/one-highflyer/nexwave_shopify_connector/commit/f5bddc068691c088e778402b7e73d7b4972cd714))
+
 ## [1.11.5](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.4...v1.11.5) (2026-03-15)
 
 
