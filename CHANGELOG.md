@@ -1,3 +1,10 @@
+## [1.11.5](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.4...v1.11.5) (2026-03-15)
+
+
+### Bug Fixes
+
+* move documentation links to top of README ([36c37be](https://github.com/one-highflyer/nexwave_shopify_connector/commit/36c37bea770c1125af90d9156990051e559afee6))
+
 ## [1.11.4](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.3...v1.11.4) (2026-03-14)
 
 
