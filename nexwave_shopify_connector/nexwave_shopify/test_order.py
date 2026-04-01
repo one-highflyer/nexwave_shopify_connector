@@ -314,6 +314,66 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 
 	# --- deduplication tests ---
 
+	def test_dedup_upgrades_title_to_company_on_existing_address(self):
+		"""When an existing address has a person name as title and a subsequent order
+		provides a company name, the existing address title should be upgraded."""
+		# First order: no company, person name becomes title
+		address_data_1 = {
+			"name": "Jeni Gorrie",
+			"address1": "105 Victoria Street",
+			"city": "Dargaville",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		addr = frappe.get_doc("Address", addr_name_1)
+		self.assertEqual(addr.address_title, "Jeni Gorrie")
+
+		# Second order: same address, now with company name
+		address_data_2 = {
+			"company": "The Wellness Centre",
+			"name": "Jeni Gorrie",
+			"address1": "105 Victoria Street",
+			"city": "Dargaville",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		# Should reuse the same address
+		self.assertEqual(addr_name_1, addr_name_2)
+
+		# Title should be upgraded to company name
+		addr.reload()
+		self.assertEqual(addr.address_title, "The Wellness Centre")
+
+	def test_dedup_does_not_downgrade_company_title_to_person(self):
+		"""When an existing address already has a company name as title, a subsequent
+		order without a company should not downgrade it back to a person name."""
+		# First order: with company
+		address_data_1 = {
+			"company": "Mount Pharmacy",
+			"name": "Staff Member",
+			"address1": "132 Maunganui Rd",
+			"city": "Tauranga",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		# Second order: no company, different person
+		address_data_2 = {
+			"name": "Another Person",
+			"address1": "132 Maunganui Rd",
+			"city": "Tauranga",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		self.assertEqual(addr_name_1, addr_name_2)
+
+		# Title should remain as company, not downgraded
+		addr = frappe.get_doc("Address", addr_name_1)
+		self.assertEqual(addr.address_title, "Mount Pharmacy")
+
 	def test_dedup_finds_existing_address_regardless_of_title(self):
 		"""Same physical address with different person names should not create a duplicate.
 

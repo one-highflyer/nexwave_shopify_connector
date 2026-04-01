@@ -1023,6 +1023,17 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		customer_name, address_type, address_line1, city, country
 	)
 	if existing:
+		# Upgrade address_title to company name if the existing record has a person
+		# name and the incoming Shopify data provides a company. This fixes legacy
+		# addresses created before the company-priority logic was added.
+		if shopify_company:
+			existing_title = frappe.db.get_value("Address", existing, "address_title")
+			if existing_title != shopify_company:
+				frappe.db.set_value("Address", existing, "address_title", shopify_company)
+				logger.info(
+					"Updated address_title from %s to %s on %s",
+					existing_title, shopify_company, existing,
+				)
 		logger.info("Address already exists: %s", existing)
 		return existing
 
