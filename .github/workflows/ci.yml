@@ -15,12 +15,13 @@ env:
   BRANCH: ${{ github.base_ref || github.ref_name }}
 
 concurrency:
-  group: develop-nexwave-shopify-connector-${{ github.event.number }}
+  group: ci-${{ github.ref }}-${{ github.event.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
   tests:
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, 'chore(release):')"
     strategy:
       fail-fast: false
     name: Server
