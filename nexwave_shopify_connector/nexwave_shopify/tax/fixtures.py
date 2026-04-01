@@ -49,7 +49,7 @@ def setup_tax_test_data(commit: bool = False):
 	_create_test_shopify_store()
 
 	if commit:
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture setup/teardown
 
 
 def _ensure_test_accounts():
@@ -191,7 +191,7 @@ def load_shopify_order(filename: str) -> dict:
 	if not filepath.exists():
 		raise FileNotFoundError(f"Test data file not found: {filepath}")
 
-	with open(filepath) as f:
+	with open(filepath) as f:  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal -- loading test fixture JSON from app's own data directory
 		return json.load(f)
 
 
@@ -279,7 +279,7 @@ def create_test_items(item_codes: list[str], commit: bool = False) -> dict[str, 
 		created_items[item_code] = item.name
 
 	if commit:
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture setup/teardown
 
 	return created_items
 
@@ -297,4 +297,4 @@ def delete_test_items(item_codes: list[str], commit: bool = False):
 			frappe.delete_doc("Item", item_code, force=True)
 
 	if commit:
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture setup/teardown

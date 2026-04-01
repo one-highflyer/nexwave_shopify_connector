@@ -869,7 +869,7 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 			template.insert(ignore_permissions=True)
 			cls.zr_template = template.name  # Use actual name
 
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture setup
 
 	def test_zero_rated_item_gets_template(self):
 		"""Zero-rated items get zero_rated_item_tax_template when configured."""

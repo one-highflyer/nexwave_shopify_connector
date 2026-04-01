@@ -63,11 +63,11 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 
 	# Phase 1: Sync customer and addresses
 	customer_name, contact_name, billing_addr, shipping_addr = _sync_customer(order, store)
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: commit after customer/address sync before SO creation
 
 	# Phase 2: Create Sales Order
 	so = _create_sales_order(order, store, customer_name, contact_name, billing_addr, shipping_addr)
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: commit SO before optional submit/invoice phases
 
 	logger.info(
 		"Sales Order created: %s for Shopify Order ID: %s, financial status: %s",
@@ -81,7 +81,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 		# Phase 3: Submit Sales Order
 		so.reload()  # Refresh after Phase 2 commit for check_if_latest()
 		so.submit()
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: commit submitted SO before invoice phase
 		logger.info("Sales Order submitted: %s for Shopify Order ID: %s", so.name, order.get("id"))
 
 		if store.auto_create_invoice:
@@ -89,7 +89,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 			so.reload()  # Refresh docstatus (now 1) after Phase 3 commit — needed for _create_sales_invoice guard check
 			si = _create_sales_invoice(so, order, store)
 			if si:
-				frappe.db.commit()
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: commit invoice before payment phase
 				logger.info("Sales Invoice created: %s for Shopify Order ID: %s", si.name, order.get("id"))
 			else:
 				logger.info(
@@ -102,7 +102,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 			if store.auto_create_payment_entry and si and si.grand_total > 0:
 				# Phase 5: Create Payment Entries
 				_create_payment_entries(si, order, store, getdate(order.get("created_at")))
-				frappe.db.commit()
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: commit payment entries before fulfillment phase
 				logger.info("Payment Entry created for Shopify Order ID: %s", order.get("id"))
 
 		# Auto-create Delivery Notes if order is already fulfilled (best-effort, non-blocking)
@@ -111,7 +111,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 				# Phase 6: Create Delivery Notes
 				result = create_delivery_notes_from_fulfillments(order, store)
 				if result.get("created"):
-					frappe.db.commit()
+					frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit
 					logger.info(
 						"Auto-created Delivery Notes for pre-fulfilled order %s: %s",
 						order.get("id"),
@@ -126,7 +126,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 					)
 				else:
 					# Legitimate skip (no fulfillments, already exists, SO not submitted, etc.)
-					frappe.db.commit()
+					frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit
 					logger.info(
 						"Skipped Delivery Note creation for pre-fulfilled order %s: %s",
 						order.get("id"),
@@ -188,7 +188,7 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info(
 			"[orders/create] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -258,7 +258,7 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log before re-raising
 		raise
 
 
@@ -283,7 +283,7 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info(
 			"[orders/paid] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -338,14 +338,14 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 		# Phase A: Update financial status
 		frappe.db.set_value("Sales Order", so_name, "shopify_financial_status", "paid")
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: phased commit
 		logger.info("[orders/paid] Updated financial status to 'paid' for SO %s", so_name)
 
 		# Phase B: Submit if draft and auto-submit enabled
 		so.reload()  # Refresh docstatus after Phase A commit (may have been submitted by concurrent webhook)
 		if so.docstatus == 0 and store.auto_submit_sales_order:
 			so.submit()
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: phased commit
 			logger.info("[orders/paid] Submitted Sales Order %s", so.name)
 		elif so.docstatus == 0:
 			logger.info("[orders/paid] SO %s is draft but auto_submit is disabled", so.name)
@@ -357,12 +357,12 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 			si = _create_sales_invoice(so, order, store)
 
 			if si:
-				frappe.db.commit()
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: phased commit
 				logger.info("[orders/paid] Created Sales Invoice %s", si.name)
 				if store.auto_create_payment_entry and si.grand_total > 0:
 					logger.info("[orders/paid] Creating Payment Entry for SI %s", si.name)
 					_create_payment_entries(si, order, store, getdate(order.get("created_at")))
-					frappe.db.commit()
+					frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- webhook handler: phased commit
 			else:
 				logger.info("[orders/paid] Sales Invoice already exists or could not be created")
 		elif not store.auto_create_invoice:
@@ -398,7 +398,7 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log before re-raising
 		raise
 
 
@@ -416,7 +416,7 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 	logger = get_logger()
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info(
 			"[orders/cancelled] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -527,7 +527,7 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 			message=str(e),
 			shopify_store=shopify_store,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log before re-raising
 		raise
 
 
@@ -551,7 +551,7 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 	logger = get_logger()
 	# Set user context for permission checks (manual sync may run as authenticated user)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info("Running order sync as user %s, skipping elevation to Administrator", frappe.session.user)
 	store = frappe.get_doc("Shopify Store", shopify_store)
@@ -664,7 +664,7 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 						reference_doctype="Shopify Store",
 						reference_name=shopify_store,
 					)
-					frappe.db.commit()
+					frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log in sync loop
 					logger.error(
 						"Error processing order: %s for Shopify Store: %s, Error: %s",
 						order.id,

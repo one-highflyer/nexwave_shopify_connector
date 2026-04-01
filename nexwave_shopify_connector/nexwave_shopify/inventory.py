@@ -119,7 +119,7 @@ def sync_store_inventory(store_name: str):
 	if not items_to_sync:
 		logger.warning("No items to sync for Shopify store: %s", store_name)
 		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 		return
 
 	sync_count = 0
@@ -202,7 +202,7 @@ def sync_store_inventory(store_name: str):
 
 		# Update last sync time
 		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 
 		# Determine overall status
 		if error_count > 0 and sync_count == 0:

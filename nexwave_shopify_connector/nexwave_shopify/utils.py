@@ -117,7 +117,7 @@ def create_shopify_log(
 	})
 
 	log.insert(ignore_permissions=True)
-	frappe.db.commit()
+	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- error logging must persist even if caller rolls back
 	return log
 
 

@@ -30,7 +30,7 @@ def sync_fulfillment(payload: dict, request_id: str | None = None, shopify_store
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook handler runs as Guest; needs Admin to create Delivery Notes
 	else:
 		logger.info("Running as user %s, skipping elevation to Administrator", frappe.session.user)
 
