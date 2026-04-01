@@ -192,7 +192,7 @@ doctype_js = {"Item": "public/js/item.js"}
 # Testing
 # -------
 
-before_tests = "nexwave_shopify_connector.before_tests.before_tests"
+# before_tests = "nexwave_shopify_connector.before_tests.before_tests"
 
 # Overriding Methods
 # ------------------------------
