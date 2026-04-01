@@ -43,7 +43,7 @@ def sync_item_to_shopify(doc, method=None):
 		method: Event method name (on_update, after_insert)
 	"""
 	# Skip if in test mode or import
-	if frappe.flags.in_test or frappe.flags.in_import:
+	if frappe.in_test or frappe.flags.in_import:
 		return
 
 	# Skip if item is disabled
@@ -82,7 +82,7 @@ def sync_item_price_to_shopify(doc, method=None):
 		method: Event method name
 	"""
 	# Skip if in test mode or import
-	if frappe.flags.in_test or frappe.flags.in_import:
+	if frappe.in_test or frappe.flags.in_import:
 		return
 
 	# Only sync selling prices

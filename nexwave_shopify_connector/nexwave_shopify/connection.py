@@ -72,7 +72,7 @@ def shopify_session(shopify_store: str | Document | None = None, allow_implicit:
 		@functools.wraps(func)
 		def wrapper(*args, **kwargs):
 			# No auth in testing
-			if frappe.flags.in_test:
+			if frappe.in_test:
 				return func(*args, **kwargs)
 
 			# Resolve store
