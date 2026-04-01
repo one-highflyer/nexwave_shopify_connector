@@ -1,3 +1,10 @@
+## [1.11.8](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.7...v1.11.8) (2026-04-01)
+
+
+### Bug Fixes
+
+* **ci:** run erpnext.setup.utils.before_tests before test suite ([28b541c](https://github.com/one-highflyer/nexwave_shopify_connector/commit/28b541ccf7a625dca3836366de3730679b76d3e8))
+
 ## [1.11.7](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.6...v1.11.7) (2026-04-01)
 
 
