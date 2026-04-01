@@ -66,11 +66,13 @@ def create_stock_entry(item_code, qty, warehouse=None):
 def create_test_sales_order(customer, item_code, qty=10, warehouse=None, shopify_order_id=None):
 	"""Create and submit a test Sales Order."""
 	warehouse = warehouse or get_default_warehouse()
+	company = get_default_company()
 
 	so = frappe.get_doc(
 		{
 			"doctype": "Sales Order",
 			"customer": customer,
+			"company": company,
 			"delivery_date": frappe.utils.add_days(frappe.utils.nowdate(), 7),
 			"items": [
 				{

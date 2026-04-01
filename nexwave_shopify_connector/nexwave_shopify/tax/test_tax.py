@@ -814,19 +814,26 @@ class TestItemTaxTemplateSupport(IntegrationTestCase):
 	@classmethod
 	def _create_test_item_tax_templates(cls):
 		"""Create GST15 and ZR Item Tax Templates for testing."""
-		company = frappe.db.get_single_value("Global Defaults", "default_company")
-		if not company:
+		company = "_Test Company"
+		if not frappe.db.exists("Company", company):
 			company = frappe.db.get_value("Company", {}, "name")
 
 		# Get company abbreviation for template name
 		abbr = frappe.db.get_value("Company", company, "abbr") or ""
 
-		# Get tax account
+		# Get tax account - try common test account names first, then fall back to any Tax account
 		tax_account = frappe.db.get_value(
+			"Account",
+			{"account_name": "_Test Account VAT", "company": company},
+			"name",
+		) or frappe.db.get_value(
 			"Account",
 			{"account_type": "Tax", "company": company, "is_group": 0},
 			"name",
 		)
+		if not tax_account:
+			frappe.log_error("No Tax account found for test company, skipping Item Tax Template tests")
+			return
 
 		# Create GST15 template if not exists
 		# Item Tax Template names include company abbreviation: "Title - ABBR"
