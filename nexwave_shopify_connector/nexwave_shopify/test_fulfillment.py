@@ -10,7 +10,7 @@ Tests the two-mode approach:
 """
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from nexwave_shopify_connector.nexwave_shopify.fulfillment import (
 	_get_delivered_qty_map,
@@ -19,9 +19,20 @@ from nexwave_shopify_connector.nexwave_shopify.fulfillment import (
 )
 
 
+def get_default_company():
+	"""Get the default company for tests."""
+	company = frappe.db.get_single_value("Global Defaults", "default_company")
+	if not company:
+		company = frappe.db.get_value("Company", {}, "name")
+	return company
+
+
 def get_default_warehouse():
 	"""Get the default warehouse for tests."""
 	warehouse = frappe.db.get_single_value("Stock Settings", "default_warehouse")
+	if not warehouse:
+		company = get_default_company()
+		warehouse = frappe.db.get_value("Warehouse", {"is_group": 0, "company": company}, "name")
 	if not warehouse:
 		warehouse = frappe.db.get_value("Warehouse", {"is_group": 0}, "name")
 	return warehouse
@@ -30,11 +41,13 @@ def get_default_warehouse():
 def create_stock_entry(item_code, qty, warehouse=None):
 	"""Create a stock entry to add stock for testing."""
 	warehouse = warehouse or get_default_warehouse()
+	company = get_default_company()
 
 	se = frappe.get_doc(
 		{
 			"doctype": "Stock Entry",
 			"stock_entry_type": "Material Receipt",
+			"company": company,
 			"items": [
 				{
 					"item_code": item_code,
@@ -133,7 +146,7 @@ def create_test_fulfillment_payload(shopify_order_id, items):
 	}
 
 
-class TestFulfillmentDeduplication(FrappeTestCase):
+class TestFulfillmentDeduplication(IntegrationTestCase):
 	"""Test fulfillment deduplication logic."""
 
 	@classmethod

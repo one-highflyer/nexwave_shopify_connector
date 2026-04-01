@@ -21,7 +21,7 @@ Or run specific test class:
 import json
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from nexwave_shopify_connector.nexwave_shopify.tax.fixtures import (
 	create_test_items,
@@ -33,7 +33,7 @@ from nexwave_shopify_connector.nexwave_shopify.tax.fixtures import (
 )
 
 
-class TestTaxDetector(FrappeTestCase):
+class TestTaxDetector(IntegrationTestCase):
 	"""Tests for TaxDetector class - zero-rated item detection."""
 
 	@classmethod
@@ -163,7 +163,7 @@ class TestTaxDetector(FrappeTestCase):
 		self.assertIsNone(detector.get_item_tax_rate_json("TAXABLE-001"))
 
 
-class TestShippingTaxHandler(FrappeTestCase):
+class TestShippingTaxHandler(IntegrationTestCase):
 	"""Tests for ShippingTaxHandler class."""
 
 	@classmethod
@@ -330,7 +330,7 @@ class TestShippingTaxHandler(FrappeTestCase):
 		self.assertEqual(tax_rows[3]["rate"], 15.0)
 
 
-class TestTaxBuilder(FrappeTestCase):
+class TestTaxBuilder(IntegrationTestCase):
 	"""Tests for TaxBuilder class - main orchestrator."""
 
 	# Test item codes used in tests
@@ -555,7 +555,7 @@ class TestTaxBuilder(FrappeTestCase):
 		self.assertEqual(len(shipping_items), 1, "Shipping item should be added")
 
 
-class TestRoundingAdjuster(FrappeTestCase):
+class TestRoundingAdjuster(IntegrationTestCase):
 	"""Tests for rounding adjustment functionality."""
 
 	@classmethod
@@ -670,7 +670,7 @@ class TestRoundingAdjuster(FrappeTestCase):
 		self.assertEqual(tax_row["account_head"], "Store Write Off Account - TC")
 
 
-class TestErrorHandling(FrappeTestCase):
+class TestErrorHandling(IntegrationTestCase):
 	"""Tests for error handling in configuration validation."""
 
 	# Test item codes used in tests
@@ -784,7 +784,7 @@ class TestErrorHandling(FrappeTestCase):
 			store.default_shipping_charges_account = original_default
 
 
-class TestItemTaxTemplateSupport(FrappeTestCase):
+class TestItemTaxTemplateSupport(IntegrationTestCase):
 	"""Tests for Item Tax Template support in tax handling."""
 
 	# Test item codes used in tests

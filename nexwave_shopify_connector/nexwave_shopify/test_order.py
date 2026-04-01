@@ -2,14 +2,14 @@
 # See license.txt
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 from frappe.utils import flt
 
 from nexwave_shopify_connector.nexwave_shopify.order import _create_or_update_address, _get_item_price
 from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
 
 
-class TestGetItemPrice(FrappeTestCase):
+class TestGetItemPrice(IntegrationTestCase):
 	"""Test _get_item_price with real data from Shopify order #AN1870.
 
 	These tests verify the fix for the rounding error that caused a 7-cent
@@ -121,7 +121,7 @@ class TestGetItemPrice(FrappeTestCase):
 		self.assertEqual(flt(rate * 3, 2), 30.00)
 
 
-class TestSanitizePhoneNumber(FrappeTestCase):
+class TestSanitizePhoneNumber(IntegrationTestCase):
 	"""Test sanitize_phone_number for Shopify phone variations."""
 
 	def test_extension_with_ext(self):
@@ -197,7 +197,7 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 		self.assertIsNone(original)
 
 
-class TestCreateOrUpdateAddress(FrappeTestCase):
+class TestCreateOrUpdateAddress(IntegrationTestCase):
 	"""Test _create_or_update_address address_title logic and deduplication."""
 
 	@classmethod
