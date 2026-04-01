@@ -1,3 +1,10 @@
+## [1.11.9](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.8...v1.11.9) (2026-04-01)
+
+
+### Bug Fixes
+
+* **ci:** skip release commits and fix concurrency group ([add185a](https://github.com/one-highflyer/nexwave_shopify_connector/commit/add185a1a56fd69508159c0ba848c41ec47a5489))
+
 ## [1.11.8](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.7...v1.11.8) (2026-04-01)
 
 
