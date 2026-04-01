@@ -10,6 +10,21 @@ NexWave Shopify Connector is a Frappe v15 app that provides multi-store Shopify 
 - Inventory sync (Stock Ledger → Shopify Inventory)
 - Fulfillment sync (Delivery Note → Shopify Fulfillment)
 
+## Branches
+
+| Branch | Frappe | Python | Status |
+|--------|--------|--------|--------|
+| `version-15` (default) | >=15,<16 | >=3.10 | Active, CI green |
+| `version-16` | >=16,<17 | >=3.12 | v16 compatible, test fixtures need adaptation |
+
+## CI
+
+- **ci.yml**: Server tests (MariaDB + Redis + ERPNext) on push to version-* branches. Skips `chore(release):` commits.
+- **linter.yml**: Semgrep (Frappe rules + python.lang.correctness), pre-commit, pip-audit on PRs.
+- **release.yml**: Semantic-release on push to version-15.
+
+Semgrep findings are suppressed with `# nosemgrep` comments where intentional (webhook commits, admin context, guest webhook endpoint, file reads from app directories).
+
 ## Commands
 
 ### Running Tests
