@@ -966,15 +966,20 @@ def _sync_addresses(order: dict, customer_name: str) -> tuple[str | None, str | 
 
 
 def _find_existing_address(
-	customer_name: str, address_title: str, address_type: str, address_line1: str, city: str, country: str
+	customer_name: str, address_type: str, address_line1: str, city: str, country: str
 ) -> str | None:
-	"""Find existing address by content match."""
+	"""Find existing address by physical address fields.
+
+	Matches on customer, address_type, address_line1, city, and country only.
+	address_title is intentionally excluded because different people (e.g. employees)
+	can place orders from the same company address, and including it causes false
+	negatives that create duplicate address records.
+	"""
 	addresses = frappe.get_all(
 		"Address",
 		filters=[
 			["Dynamic Link", "link_doctype", "=", "Customer"],
 			["Dynamic Link", "link_name", "=", customer_name],
-			["address_title", "=", address_title],
 			["address_type", "=", address_type],
 			["address_line1", "=", address_line1],
 			["city", "=", city],
@@ -998,19 +1003,24 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		return None
 
 	# Build address fields
-	# Use Shopify address "name" first; fall back to Customer display name (not doc name,
-	# which can be a numeric ID for imported customers)
+	# Priority for address_title: 1) Shopify company name (for B2B invoicing),
+	# 2) Shopify address "name" (person), 3) Customer display name fallback
+	shopify_company = cstr(address_data.get("company")).strip()
 	shopify_addr_name = cstr(address_data.get("name")).strip()
-	if not shopify_addr_name:
-		shopify_addr_name = frappe.db.get_value("Customer", customer_name, "customer_name") or customer_name
-	address_title = shopify_addr_name
+	if shopify_company:
+		address_title = shopify_company
+	elif shopify_addr_name:
+		address_title = shopify_addr_name
+	else:
+		address_title = frappe.db.get_value("Customer", customer_name, "customer_name") or customer_name
 	address_line1 = cstr(address_data.get("address1", "")).strip() or "-"
 	city = cstr(address_data.get("city", "")).strip() or "-"
 	country = cstr(address_data.get("country", "")).strip()
 
-	# Check if address already exists
+	# Check if address already exists (matches on physical address fields only,
+	# not address_title, to prevent duplicates when different people order from same address)
 	existing = _find_existing_address(
-		customer_name, address_title, address_type, address_line1, city, country
+		customer_name, address_type, address_line1, city, country
 	)
 	if existing:
 		logger.info("Address already exists: %s", existing)
