@@ -1,3 +1,13 @@
+## [1.11.7](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.6...v1.11.7) (2026-04-01)
+
+
+### Bug Fixes
+
+* **order:** construct person name from first_name/last_name as title fallback ([b2bc55d](https://github.com/one-highflyer/nexwave_shopify_connector/commit/b2bc55d268bb6ab9009a54eeb51153dfdb857411))
+* **order:** include address_line2 in dedup to distinguish suites/units ([cdaea98](https://github.com/one-highflyer/nexwave_shopify_connector/commit/cdaea988783101db420f3c484244bba87087af77))
+* **order:** upgrade existing address title to company name on dedup match ([a0e2a7c](https://github.com/one-highflyer/nexwave_shopify_connector/commit/a0e2a7c1b4e216aef0e580667f40082f67485378))
+* **order:** use Shopify company name for address title and improve dedup ([43f74ab](https://github.com/one-highflyer/nexwave_shopify_connector/commit/43f74abbf0ade0b0eedc940cecf720ad9c71f642))
+
 ## [1.11.6](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.5...v1.11.6) (2026-03-15)
 
 
