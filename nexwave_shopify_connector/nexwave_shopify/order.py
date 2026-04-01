@@ -966,17 +966,23 @@ def _sync_addresses(order: dict, customer_name: str) -> tuple[str | None, str | 
 
 
 def _find_existing_address(
-	customer_name: str, address_title: str, address_type: str, address_line1: str, city: str, country: str
+	customer_name: str, address_type: str, address_line1: str, address_line2: str, city: str, country: str
 ) -> str | None:
-	"""Find existing address by content match."""
+	"""Find existing address by physical address fields.
+
+	Matches on customer, address_type, address_line1, address_line2, city, and country.
+	address_title is intentionally excluded because different people (e.g. employees)
+	can place orders from the same company address, and including it causes false
+	negatives that create duplicate address records.
+	"""
 	addresses = frappe.get_all(
 		"Address",
 		filters=[
 			["Dynamic Link", "link_doctype", "=", "Customer"],
 			["Dynamic Link", "link_name", "=", customer_name],
-			["address_title", "=", address_title],
 			["address_type", "=", address_type],
 			["address_line1", "=", address_line1],
+			["address_line2", "=", address_line2],
 			["city", "=", city],
 			["country", "=", country],
 		],
@@ -998,21 +1004,49 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		return None
 
 	# Build address fields
-	# Use Shopify address "name" first; fall back to Customer display name (not doc name,
-	# which can be a numeric ID for imported customers)
+	# Priority for address_title: 1) Shopify company name (for B2B invoicing),
+	# 2) Shopify address "name" (person), 3) Customer display name fallback
+	shopify_company = cstr(address_data.get("company")).strip()
 	shopify_addr_name = cstr(address_data.get("name")).strip()
-	if not shopify_addr_name:
-		shopify_addr_name = frappe.db.get_value("Customer", customer_name, "customer_name") or customer_name
-	address_title = shopify_addr_name
+	# Construct person name from first_name/last_name as fallback when "name" is absent.
+	# Shopify auto-computes "name" from first_name + last_name, but it may be missing
+	# in edge cases (partial API responses, custom checkout flows).
+	shopify_person_name = " ".join(
+		part for part in [
+			cstr(address_data.get("first_name")).strip(),
+			cstr(address_data.get("last_name")).strip(),
+		] if part
+	)
+	if shopify_company:
+		address_title = shopify_company
+	elif shopify_addr_name:
+		address_title = shopify_addr_name
+	elif shopify_person_name:
+		address_title = shopify_person_name
+	else:
+		address_title = frappe.db.get_value("Customer", customer_name, "customer_name") or customer_name
 	address_line1 = cstr(address_data.get("address1", "")).strip() or "-"
+	address_line2 = cstr(address_data.get("address2", "")).strip()
 	city = cstr(address_data.get("city", "")).strip() or "-"
 	country = cstr(address_data.get("country", "")).strip()
 
-	# Check if address already exists
+	# Check if address already exists (matches on physical address fields only,
+	# not address_title, to prevent duplicates when different people order from same address)
 	existing = _find_existing_address(
-		customer_name, address_title, address_type, address_line1, city, country
+		customer_name, address_type, address_line1, address_line2, city, country
 	)
 	if existing:
+		# Upgrade address_title to company name if the existing record has a person
+		# name and the incoming Shopify data provides a company. This fixes legacy
+		# addresses created before the company-priority logic was added.
+		if shopify_company:
+			existing_title = frappe.db.get_value("Address", existing, "address_title")
+			if existing_title != shopify_company:
+				frappe.db.set_value("Address", existing, "address_title", shopify_company)
+				logger.info(
+					"Updated address_title from %s to %s on %s",
+					existing_title, shopify_company, existing,
+				)
 		logger.info("Address already exists: %s", existing)
 		return existing
 
@@ -1026,7 +1060,7 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 		"address_title": address_title,
 		"address_type": address_type,
 		"address_line1": address_line1,
-		"address_line2": cstr(address_data.get("address2", "")).strip(),
+		"address_line2": address_line2,
 		"city": city,
 		"state": cstr(address_data.get("province", "")).strip(),
 		"pincode": cstr(address_data.get("zip", "")).strip(),

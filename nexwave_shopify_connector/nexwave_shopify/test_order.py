@@ -198,7 +198,7 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 
 
 class TestCreateOrUpdateAddress(FrappeTestCase):
-	"""Test _create_or_update_address address_title fallback logic."""
+	"""Test _create_or_update_address address_title logic and deduplication."""
 
 	@classmethod
 	def setUpClass(cls):
@@ -223,8 +223,25 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 		frappe.delete_doc("Customer", cls.customer.name, ignore_permissions=True, force=True)
 		super().tearDownClass()
 
-	def test_address_title_uses_shopify_name_when_present(self):
-		"""When Shopify address has a 'name' field, use it as address_title."""
+	# --- address_title priority tests ---
+
+	def test_address_title_prefers_company_over_name(self):
+		"""When Shopify address has both 'company' and 'name', company wins (B2B invoicing)."""
+		address_data = {
+			"company": "The Wellness Centre",
+			"name": "Jeni Gorrie",
+			"address1": "50 B2B Street",
+			"city": "Auckland",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "The Wellness Centre")
+
+	def test_address_title_uses_name_when_no_company(self):
+		"""When Shopify address has 'name' but no 'company', use name as address_title."""
 		address_data = {
 			"name": "Jane Doe",
 			"address1": "10 Test Street",
@@ -237,8 +254,38 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 		addr = frappe.get_doc("Address", addr_name)
 		self.assertEqual(addr.address_title, "Jane Doe")
 
+	def test_address_title_uses_name_when_company_is_empty(self):
+		"""When Shopify address 'company' is empty string, fall through to 'name'."""
+		address_data = {
+			"company": "",
+			"name": "John Smith",
+			"address1": "55 Empty Company Lane",
+			"city": "Hamilton",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "John Smith")
+
+	def test_address_title_uses_name_when_company_is_whitespace(self):
+		"""When Shopify address 'company' is whitespace only, fall through to 'name'."""
+		address_data = {
+			"company": "   ",
+			"name": "Sarah Connor",
+			"address1": "60 Whitespace Blvd",
+			"city": "Tauranga",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "Sarah Connor")
+
 	def test_address_title_falls_back_to_customer_display_name(self):
-		"""When Shopify address has no 'name', use Customer display name (not doc name)."""
+		"""When Shopify address has no 'name' and no 'company', use Customer display name."""
 		address_data = {
 			"address1": "20 Fallback Road",
 			"city": "Wellington",
@@ -250,10 +297,11 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 		addr = frappe.get_doc("Address", addr_name)
 		self.assertEqual(addr.address_title, "_Test Shopify Address Customer")
 
-	def test_address_title_falls_back_with_empty_name(self):
-		"""When Shopify address 'name' is empty string, use Customer display name."""
+	def test_address_title_falls_back_with_empty_name_and_no_company(self):
+		"""When both 'name' and 'company' are empty, use Customer display name."""
 		address_data = {
 			"name": "",
+			"company": "",
 			"address1": "30 Empty Name Ave",
 			"city": "Christchurch",
 			"country": "New Zealand",
@@ -263,3 +311,180 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 
 		addr = frappe.get_doc("Address", addr_name)
 		self.assertEqual(addr.address_title, "_Test Shopify Address Customer")
+
+	def test_address_title_uses_first_and_last_when_no_name_or_company(self):
+		"""When Shopify address has first_name/last_name but no 'name' or 'company',
+		construct person name from first_name + last_name."""
+		address_data = {
+			"first_name": "Sarah",
+			"last_name": "Connor",
+			"address1": "70 Constructed Name Road",
+			"city": "Queenstown",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "Sarah Connor")
+
+	# --- deduplication tests ---
+
+	def test_dedup_upgrades_title_to_company_on_existing_address(self):
+		"""When an existing address has a person name as title and a subsequent order
+		provides a company name, the existing address title should be upgraded."""
+		# First order: no company, person name becomes title
+		address_data_1 = {
+			"name": "Jeni Gorrie",
+			"address1": "105 Victoria Street",
+			"city": "Dargaville",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		addr = frappe.get_doc("Address", addr_name_1)
+		self.assertEqual(addr.address_title, "Jeni Gorrie")
+
+		# Second order: same address, now with company name
+		address_data_2 = {
+			"company": "The Wellness Centre",
+			"name": "Jeni Gorrie",
+			"address1": "105 Victoria Street",
+			"city": "Dargaville",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		# Should reuse the same address
+		self.assertEqual(addr_name_1, addr_name_2)
+
+		# Title should be upgraded to company name
+		addr.reload()
+		self.assertEqual(addr.address_title, "The Wellness Centre")
+
+	def test_dedup_does_not_downgrade_company_title_to_person(self):
+		"""When an existing address already has a company name as title, a subsequent
+		order without a company should not downgrade it back to a person name."""
+		# First order: with company
+		address_data_1 = {
+			"company": "Mount Pharmacy",
+			"name": "Staff Member",
+			"address1": "132 Maunganui Rd",
+			"city": "Tauranga",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		# Second order: no company, different person
+		address_data_2 = {
+			"name": "Another Person",
+			"address1": "132 Maunganui Rd",
+			"city": "Tauranga",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		self.assertEqual(addr_name_1, addr_name_2)
+
+		# Title should remain as company, not downgraded
+		addr = frappe.get_doc("Address", addr_name_1)
+		self.assertEqual(addr.address_title, "Mount Pharmacy")
+
+	def test_dedup_finds_existing_address_regardless_of_title(self):
+		"""Same physical address with different person names should not create a duplicate.
+
+		Simulates two orders from the same company address placed by different people.
+		The second call should return the existing address, not create a new one.
+		"""
+		# First order: person A from a company
+		address_data_1 = {
+			"company": "Acme Corp",
+			"name": "Alice Anderson",
+			"address1": "100 Dedup Drive",
+			"city": "Dunedin",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		# Second order: person B from the same company address
+		address_data_2 = {
+			"company": "Acme Corp",
+			"name": "Bob Brown",
+			"address1": "100 Dedup Drive",
+			"city": "Dunedin",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		# Should reuse the existing address, not create a new one
+		self.assertEqual(addr_name_1, addr_name_2)
+
+	def test_dedup_finds_existing_address_different_names_no_company(self):
+		"""Same physical address with different person names (no company) should deduplicate.
+
+		Simulates a household where different family members place orders.
+		"""
+		address_data_1 = {
+			"name": "Parent Name",
+			"address1": "200 Family Lane",
+			"city": "Nelson",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Shipping")
+		self.created_addresses.append(addr_name_1)
+
+		# Second order from same address, different person
+		address_data_2 = {
+			"name": "Child Name",
+			"address1": "200 Family Lane",
+			"city": "Nelson",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Shipping")
+		self.assertEqual(addr_name_1, addr_name_2)
+
+	def test_dedup_distinguishes_different_physical_addresses(self):
+		"""Different physical addresses for the same customer should create separate records."""
+		address_data_1 = {
+			"name": "Same Person",
+			"address1": "300 First Avenue",
+			"city": "Napier",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		address_data_2 = {
+			"name": "Same Person",
+			"address1": "400 Second Boulevard",
+			"city": "Napier",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_2)
+
+		self.assertNotEqual(addr_name_1, addr_name_2)
+
+	def test_dedup_same_address1_different_unit_creates_separate_records(self):
+		"""Same street address but different units (address2) should create separate records."""
+		address_data_1 = {
+			"name": "Same Person",
+			"address1": "100 Queen Street",
+			"address2": "Unit 1",
+			"city": "Auckland",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		address_data_2 = {
+			"name": "Same Person",
+			"address1": "100 Queen Street",
+			"address2": "Unit 2",
+			"city": "Auckland",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_2)
+
+		self.assertNotEqual(addr_name_1, addr_name_2)
