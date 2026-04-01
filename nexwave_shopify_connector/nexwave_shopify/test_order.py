@@ -312,6 +312,22 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 		addr = frappe.get_doc("Address", addr_name)
 		self.assertEqual(addr.address_title, "_Test Shopify Address Customer")
 
+	def test_address_title_uses_first_and_last_when_no_name_or_company(self):
+		"""When Shopify address has first_name/last_name but no 'name' or 'company',
+		construct person name from first_name + last_name."""
+		address_data = {
+			"first_name": "Sarah",
+			"last_name": "Connor",
+			"address1": "70 Constructed Name Road",
+			"city": "Queenstown",
+			"country": "New Zealand",
+		}
+		addr_name = _create_or_update_address(address_data, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name)
+
+		addr = frappe.get_doc("Address", addr_name)
+		self.assertEqual(addr.address_title, "Sarah Connor")
+
 	# --- deduplication tests ---
 
 	def test_dedup_upgrades_title_to_company_on_existing_address(self):
@@ -442,6 +458,30 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 			"name": "Same Person",
 			"address1": "400 Second Boulevard",
 			"city": "Napier",
+			"country": "New Zealand",
+		}
+		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_2)
+
+		self.assertNotEqual(addr_name_1, addr_name_2)
+
+	def test_dedup_same_address1_different_unit_creates_separate_records(self):
+		"""Same street address but different units (address2) should create separate records."""
+		address_data_1 = {
+			"name": "Same Person",
+			"address1": "100 Queen Street",
+			"address2": "Unit 1",
+			"city": "Auckland",
+			"country": "New Zealand",
+		}
+		addr_name_1 = _create_or_update_address(address_data_1, self.customer.name, "Billing")
+		self.created_addresses.append(addr_name_1)
+
+		address_data_2 = {
+			"name": "Same Person",
+			"address1": "100 Queen Street",
+			"address2": "Unit 2",
+			"city": "Auckland",
 			"country": "New Zealand",
 		}
 		addr_name_2 = _create_or_update_address(address_data_2, self.customer.name, "Billing")

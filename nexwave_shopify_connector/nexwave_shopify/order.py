@@ -1008,10 +1008,21 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 	# 2) Shopify address "name" (person), 3) Customer display name fallback
 	shopify_company = cstr(address_data.get("company")).strip()
 	shopify_addr_name = cstr(address_data.get("name")).strip()
+	# Construct person name from first_name/last_name as fallback when "name" is absent.
+	# Shopify auto-computes "name" from first_name + last_name, but it may be missing
+	# in edge cases (partial API responses, custom checkout flows).
+	shopify_person_name = " ".join(
+		part for part in [
+			cstr(address_data.get("first_name")).strip(),
+			cstr(address_data.get("last_name")).strip(),
+		] if part
+	)
 	if shopify_company:
 		address_title = shopify_company
 	elif shopify_addr_name:
 		address_title = shopify_addr_name
+	elif shopify_person_name:
+		address_title = shopify_person_name
 	else:
 		address_title = frappe.db.get_value("Customer", customer_name, "customer_name") or customer_name
 	address_line1 = cstr(address_data.get("address1", "")).strip() or "-"
