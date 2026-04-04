@@ -91,7 +91,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq mariadb-client pkg-config
+          sudo apt-get install -y -qq mariadb-client pkg-config libmariadb-dev
 
       - name: Setup
         run: |
