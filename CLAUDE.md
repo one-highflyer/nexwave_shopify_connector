@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Overview
 
-NexWave Shopify Connector is a Frappe v15 app that provides multi-store Shopify integration for NexWave (ERPNext). It handles:
+NexWave Shopify Connector is a Frappe app that provides multi-store Shopify integration for NexWave (ERPNext). It handles:
 - Product sync (Item ↔ Shopify Product)
 - Order import (Shopify Order → Sales Order)
 - Inventory sync (Stock Ledger → Shopify Inventory)
@@ -31,55 +31,40 @@ bench --site <site> migrate
 
 ## Writing Tests
 
-**IMPORTANT**: When writing tests for this app, use Frappe-compatible unit tests, NOT pytest with mocks.
+**IMPORTANT**: Use Frappe-compatible integration tests, NOT pytest with mocks.
 
-### Required Pattern
+This app targets Frappe v16 (`version-16` branch). Use `IntegrationTestCase`:
 
-1. **Use FrappeTestCase**:
-   ```python
-   import frappe
-   from frappe.tests.utils import FrappeTestCase
+```python
+import frappe
+from frappe.tests import IntegrationTestCase
 
-   class TestMyFeature(FrappeTestCase):
-       @classmethod
-       def setUpClass(cls):
-           super().setUpClass()
-           # Setup test data here
-   ```
+class TestMyFeature(IntegrationTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Setup test data here
+```
 
-2. **Create real documents** instead of mocks:
-   ```python
-   def test_order_creation(self):
-       so = frappe.get_doc({
-           "doctype": "Sales Order",
-           "customer": "_Test Customer",
-           ...
-       })
-       so.insert()
-       self.assertEqual(so.docstatus, 0)
-   ```
+### Key patterns
 
-3. **Use fixtures** for test data setup in a separate `fixtures.py` file
-
-4. **Clean up** created documents in tests:
-   ```python
-   def test_something(self):
-       doc = create_test_doc()
-       # ... test logic ...
-       doc.cancel()  # or doc.delete()
-   ```
+- **Create real documents** instead of mocks for Frappe doctypes
+- **Use fixtures** for test data setup in a separate `fixtures.py` file (see `nexwave_shopify/tests/fixtures.py`)
+- **Mock Shopify API calls** using `MockedRequestTestCase` or `unittest.mock.patch` for HTTP requests
+- **Load realistic test data** from JSON files in `test_data/` directories
 
 ### Test Location
 
 Place tests in the module being tested:
 - `nexwave_shopify/tax/test_tax.py` for tax module tests
 - `nexwave_shopify/test_order.py` for order sync tests
+- `nexwave_shopify/test_fulfillment.py` for fulfillment sync tests
 
 ### What to Test
 
 - Document creation and validation
 - Tax calculation accuracy
-- Shopify API response handling
+- Shopify API response handling (with mocked HTTP responses)
 - Error scenarios and edge cases
 
 ## Key Modules
