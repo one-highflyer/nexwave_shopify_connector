@@ -1,3 +1,10 @@
+## [1.11.10](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.9...v1.11.10) (2026-04-04)
+
+
+### Bug Fixes
+
+* **ci:** install pkg-config for self-hosted runner ([5e193bd](https://github.com/one-highflyer/nexwave_shopify_connector/commit/5e193bd72a5d0e608b430530e7ef4fe797beed99))
+
 ## [1.11.9](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.8...v1.11.9) (2026-04-01)
 
 
