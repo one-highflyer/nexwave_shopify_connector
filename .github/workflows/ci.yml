@@ -20,10 +20,9 @@ concurrency:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 60
     if: "!contains(github.event.head_commit.message, 'chore(release):')"
-    strategy:
-      fail-fast: false
     name: Server
 
     services:
@@ -31,10 +30,12 @@ jobs:
         image: redis:alpine
         ports:
           - 13000:6379
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=2s --health-retries=3
       redis-queue:
         image: redis:alpine
         ports:
           - 11000:6379
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=2s --health-retries=3
       mariadb:
         image: mariadb:11.8
         env:
@@ -46,6 +47,9 @@ jobs:
     steps:
       - name: Clone
         uses: actions/checkout@v4
+
+      - name: Clean previous bench
+        run: rm -rf ${{ github.workspace }}/../frappe-bench
 
       - name: Find tests
         run: |
@@ -86,18 +90,18 @@ jobs:
 
       - name: Install MariaDB Client
         run: |
-          sudo apt update
-          sudo apt-get install mariadb-client
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mariadb-client
 
       - name: Setup
         run: |
           pip install frappe-bench
-          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" --frappe-branch "$BRANCH" ~/frappe-bench
+          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" --frappe-branch "$BRANCH" ${{ github.workspace }}/../frappe-bench
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
 
       - name: Install
-        working-directory: /home/runner/frappe-bench
+        working-directory: ${{ github.workspace }}/../frappe-bench
         run: |
           bench get-app erpnext --branch "$BRANCH"
           bench get-app payments --branch "$BRANCH"
@@ -112,7 +116,7 @@ jobs:
           CI: "Yes"
 
       - name: Run Tests
-        working-directory: /home/runner/frappe-bench
+        working-directory: ${{ github.workspace }}/../frappe-bench
         run: |
           bench --site test_site set-config allow_tests true
           bench --site test_site run-tests --app nexwave_shopify_connector
