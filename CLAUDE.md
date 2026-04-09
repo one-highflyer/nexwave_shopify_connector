@@ -110,3 +110,5 @@ This app uses semantic-release (see `.releaserc`). Follow Angular commit format:
 - `feat(scope): description` - New feature (minor release)
 - `fix(scope): description` - Bug fix (patch release)
 - `refactor(scope): description` - Code refactor (patch release)
+
+**No PII in commits:** Never include customer names, store names, site URLs, or other identifying information in commit messages, PR titles, or PR descriptions. Describe changes generically.
