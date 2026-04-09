@@ -781,7 +781,15 @@ def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | N
 			message=frappe.get_traceback(),
 			title=_("Fetch Products & Map by SKU Failed - {0}").format(store.shop_domain),
 		)
-		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log after rollback
+		create_shopify_log(
+			status="Error",
+			method="fetch_products_and_map_by_sku",
+			shopify_store=store.name,
+			message=_("SKU mapping failed for {0}: {1}").format(store.shop_domain, str(e)),
+			exception=frappe.get_traceback(),
+			reference_doctype="Shopify Store",
+			reference_name=store.name,
+		)
 
 		if initiating_user:
 			frappe.publish_realtime(
