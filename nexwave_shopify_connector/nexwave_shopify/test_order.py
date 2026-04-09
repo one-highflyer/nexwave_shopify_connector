@@ -9,6 +9,26 @@ from nexwave_shopify_connector.nexwave_shopify.order import _create_or_update_ad
 from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
 
 
+def _ensure_leaf_customer_group():
+	"""Ensure a non-group (leaf) Customer Group exists for test customers.
+
+	On a fresh CI site, the default customer group from Selling Settings is
+	'All Customer Groups', which is a group node. ERPNext rejects group-type
+	customer groups when creating a Customer, so we need a leaf node.
+	"""
+	leaf_group = "_Test Customer Group"
+	if not frappe.db.exists("Customer Group", leaf_group):
+		frappe.get_doc(
+			{
+				"doctype": "Customer Group",
+				"customer_group_name": leaf_group,
+				"parent_customer_group": "All Customer Groups",
+				"is_group": 0,
+			}
+		).insert(ignore_if_duplicate=True)
+	return leaf_group
+
+
 class TestGetItemPrice(FrappeTestCase):
 	"""Test _get_item_price with real data from Shopify order #AN1870.
 
@@ -205,12 +225,14 @@ class TestCreateOrUpdateAddress(FrappeTestCase):
 		super().setUpClass()
 		# Create a test customer with a numeric-style doc name
 		if not frappe.db.exists("Customer", {"customer_name": "_Test Shopify Address Customer"}):
-			cls.customer = frappe.get_doc({
-				"doctype": "Customer",
-				"customer_name": "_Test Shopify Address Customer",
-				"customer_group": frappe.db.get_single_value("Selling Settings", "customer_group"),
-				"territory": frappe.db.get_single_value("Selling Settings", "territory"),
-			})
+			cls.customer = frappe.get_doc(
+				{
+					"doctype": "Customer",
+					"customer_name": "_Test Shopify Address Customer",
+					"customer_group": _ensure_leaf_customer_group(),
+					"territory": frappe.db.get_single_value("Selling Settings", "territory"),
+				}
+			)
 			cls.customer.insert(ignore_permissions=True)
 		else:
 			cls.customer = frappe.get_doc("Customer", {"customer_name": "_Test Shopify Address Customer"})
