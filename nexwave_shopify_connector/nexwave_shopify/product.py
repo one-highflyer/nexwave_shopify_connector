@@ -480,18 +480,17 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 			update_modified=False,
 		)
 	else:
-		# Create new row
+		# Create new row directly (no parent save, no on_update hook)
 		logger.info("Creating new row on Item Shopify Store for item %s, store %s", item.name, store.name)
-		row_data = {
-			"shopify_store": store.name,
-			"enabled": 1,
-			**update_data,
-		}
-		item.reload()
-		item.append("shopify_stores", row_data)
-		item.flags.ignore_validate = True
-		item.flags.ignore_mandatory = True
-		item.save(ignore_permissions=True)
+		row = item.append(
+			"shopify_stores",
+			{
+				"shopify_store": store.name,
+				"enabled": 1,
+				**update_data,
+			},
+		)
+		row.db_insert()
 
 
 def build_product_payload(item, store) -> tuple:
