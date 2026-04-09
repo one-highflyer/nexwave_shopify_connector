@@ -477,6 +477,8 @@ def manual_inventory_sync(store_name: str):
 		"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 		queue="long",
 		timeout=3600,
+		job_id=f"inventory_sync_{store_name}",
+		deduplicate=True,
 		store_name=store_name,
 	)
 
