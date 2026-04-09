@@ -317,7 +317,8 @@ class ShopifyStore(Document):
 			"nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store._fetch_products_and_map_by_sku_job",
 			queue="long",
 			timeout=1800,
-			job_name=f"sku_mapping_{self.name}",
+			job_id=f"sku_mapping_{self.name}",
+			deduplicate=True,
 			store_name=self.name,
 			initiating_user=frappe.session.user,
 		)
