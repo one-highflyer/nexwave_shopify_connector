@@ -142,7 +142,7 @@ def _process_order(order: dict, store, request_id: str | None = None) -> str | N
 				)
 				create_shopify_log(
 					status="Error",
-					message=f"Failed to auto-create Delivery Notes for pre-fulfilled order: {str(e)}",
+					message=f"Failed to auto-create Delivery Notes for pre-fulfilled order: {e!s}",
 					exception=frappe.get_traceback(),
 					shopify_store=store.name,
 					reference_doctype="Sales Order",
@@ -188,7 +188,9 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		frappe.set_user(
+			"Administrator"
+		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info(
 			"[orders/create] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -283,7 +285,9 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		frappe.set_user(
+			"Administrator"
+		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info(
 			"[orders/paid] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -416,7 +420,9 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 	logger = get_logger()
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		frappe.set_user(
+			"Administrator"
+		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info(
 			"[orders/cancelled] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -551,7 +557,9 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 	logger = get_logger()
 	# Set user context for permission checks (manual sync may run as authenticated user)
 	if frappe.session.user == "Guest":
-		frappe.set_user("Administrator")  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		frappe.set_user(
+			"Administrator"
+		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 	else:
 		logger.info("Running order sync as user %s, skipping elevation to Administrator", frappe.session.user)
 	store = frappe.get_doc("Shopify Store", shopify_store)
@@ -1012,10 +1020,12 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 	# Shopify auto-computes "name" from first_name + last_name, but it may be missing
 	# in edge cases (partial API responses, custom checkout flows).
 	shopify_person_name = " ".join(
-		part for part in [
+		part
+		for part in [
 			cstr(address_data.get("first_name")).strip(),
 			cstr(address_data.get("last_name")).strip(),
-		] if part
+		]
+		if part
 	)
 	if shopify_company:
 		address_title = shopify_company
@@ -1045,7 +1055,9 @@ def _create_or_update_address(address_data: dict, customer_name: str, address_ty
 				frappe.db.set_value("Address", existing, "address_title", shopify_company)
 				logger.info(
 					"Updated address_title from %s to %s on %s",
-					existing_title, shopify_company, existing,
+					existing_title,
+					shopify_company,
+					existing,
 				)
 		logger.info("Address already exists: %s", existing)
 		return existing
@@ -1256,7 +1268,8 @@ def _create_sales_order(
 			"delivery_date": getdate(order.get("created_at")) or nowdate(),
 			"company": store.company,
 			"cost_center": store.cost_center,
-			"selling_price_list": frappe.db.get_value("Customer", customer_name, "default_price_list") or store.price_list,
+			"selling_price_list": frappe.db.get_value("Customer", customer_name, "default_price_list")
+			or store.price_list,
 			"ignore_pricing_rule": 1,
 			"items": items,
 			"taxes": taxes,

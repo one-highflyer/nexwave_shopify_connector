@@ -301,9 +301,7 @@ def register_webhooks(store: Document) -> list[Webhook]:
 
 	# Filter events based on store settings
 	enabled_events = [
-		event
-		for event in WEBHOOK_EVENTS
-		if getattr(store, WEBHOOK_EVENT_FLAGS.get(event, ""), True)
+		event for event in WEBHOOK_EVENTS if getattr(store, WEBHOOK_EVENT_FLAGS.get(event, ""), True)
 	]
 
 	logger.info(
@@ -350,7 +348,9 @@ def unregister_webhooks(store: Document) -> None:
 				webhook.destroy()
 
 
-@frappe.whitelist(allow_guest=True)  # nosemgrep: frappe-semgrep-rules.rules.security.guest-whitelisted-method -- Shopify webhook endpoint; HMAC-validated before processing
+@frappe.whitelist(
+	allow_guest=True
+)  # nosemgrep: frappe-semgrep-rules.rules.security.guest-whitelisted-method -- Shopify webhook endpoint; HMAC-validated before processing
 def store_request_data() -> None:
 	"""
 	Webhook endpoint for Shopify.
