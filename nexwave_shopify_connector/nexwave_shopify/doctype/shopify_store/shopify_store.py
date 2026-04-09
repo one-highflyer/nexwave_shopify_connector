@@ -16,6 +16,7 @@ from nexwave_shopify_connector.nexwave_shopify.connection import (
 	get_access_token,
 )
 from nexwave_shopify_connector.nexwave_shopify.oauth import get_callback_url
+from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 from nexwave_shopify_connector.utils.logger import get_logger
 
 
@@ -311,130 +312,23 @@ class ShopifyStore(Document):
 
 	@frappe.whitelist()
 	def fetch_products_and_map_by_sku(self):
-		"""Fetch products from Shopify and auto-map by SKU to ERPNext Items.
-
-		Iterates all Shopify products (paginated), matches each variant's SKU
-		against ERPNext item_code, and creates or updates Item Shopify Store rows.
-		"""
-		logger = get_logger()
-		logger.info("Fetching products and mapping by SKU for store: %s", self.shop_domain)
-
-		try:
-			self._init_shopify_api_versions()
-			auth_details = self._get_auth_details()
-
-			# Build upfront set of valid item_codes — single DB round-trip
-			erpnext_skus = _build_erpnext_sku_set()
-			logger.info(
-				"Built ERPNext SKU set with %d entries for store: %s",
-				len(erpnext_skus),
-				self.shop_domain,
-			)
-
-			total_variants = 0
-			skipped_no_sku = 0
-			not_found = 0
-			updated = 0
-			created = 0
-			errors = 0
-
-			with Session.temp(*auth_details):
-				products_iter = PaginatedIterator(Product.find(limit=250))
-
-				for products_batch in products_iter:
-					for product in products_batch:
-						for variant in product.variants:
-							total_variants += 1
-							sku = (variant.sku or "").strip()
-
-							if not sku:
-								skipped_no_sku += 1
-								continue
-
-							if sku not in erpnext_skus:
-								not_found += 1
-								logger.info(
-									"SKU '%s' (product %s, variant %s) not found in ERPNext",
-									sku,
-									product.id,
-									variant.id,
-								)
-								continue
-
-							try:
-								action = _upsert_item_store_mapping(
-									item_code=sku,
-									store_name=self.name,
-									product_id=str(product.id),
-									variant_id=str(variant.id),
-									sku=sku,
-								)
-								if action == "updated":
-									updated += 1
-								else:
-									created += 1
-								frappe.db.commit()
-							except Exception:
-								errors += 1
-								frappe.db.rollback()
-								logger.error(
-									"Failed to map SKU '%s'",
-									sku,
-									exc_info=True,
-								)
-								frappe.log_error(
-									message=frappe.get_traceback(),
-									title=_("SKU Mapping Error - {0}").format(self.shop_domain),
-								)
-								frappe.db.commit()
-
-			matched = updated + created
-			message = _("SKU mapping complete.") + "<br><br>"
-			message += _("<b>Total Shopify variants scanned:</b> {0}").format(total_variants) + "<br>"
-			message += _("<b>Matched to NexWave items:</b> {0}").format(matched) + "<br>"
-			message += _("<b>&nbsp;&nbsp;— Updated existing:</b> {0}").format(updated) + "<br>"
-			message += _("<b>&nbsp;&nbsp;— Created new:</b> {0}").format(created) + "<br>"
-			message += _("<b>Skipped (no SKU on Shopify):</b> {0}").format(skipped_no_sku) + "<br>"
-			message += _("<b>Not found in NexWave:</b> {0}").format(not_found) + "<br>"
-			message += _("<b>Errors:</b> {0}").format(errors)
-
-			if errors > 0:
-				message += "<br><br>" + _("Check Error Log for details on failed mappings.")
-
-			logger.info(
-				"SKU mapping complete for store %s: matched=%d, updated=%d, created=%d, "
-				"skipped_no_sku=%d, not_found=%d, errors=%d",
-				self.shop_domain,
-				matched,
-				updated,
-				created,
-				skipped_no_sku,
-				not_found,
-				errors,
-			)
-
-			frappe.msgprint(
-				message,
-				title=_("Shopify SKU Mapping"),
-				indicator="green" if errors == 0 else "orange",
-			)
-
-		except Exception as e:
-			logger.error(
-				"Failed to fetch products and map by SKU for store: %s, error: %s",
-				self.shop_domain,
-				str(e),
-				exc_info=True,
-			)
-			frappe.log_error(
-				message=frappe.get_traceback(),
-				title=_("Fetch Products & Map by SKU Failed - {0}").format(self.shop_domain),
-			)
-			frappe.db.commit()
-			frappe.throw(
-				_("Failed to fetch products and map by SKU: {0}").format(str(e)),
-				title=_("Shopify Error"),
-			)
+		"""Enqueue background job to fetch products from Shopify and auto-map by SKU."""
+		frappe.enqueue(
+			"nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store._fetch_products_and_map_by_sku_job",
+			queue="long",
+			timeout=1800,
+			job_id=f"sku_mapping_{self.name}",
+			deduplicate=True,
+			store_name=self.name,
+			initiating_user=frappe.session.user,
+		)
+		frappe.msgprint(
+			_("SKU mapping has been queued for {0}. You will be notified when it completes.").format(
+				self.shop_domain
+			),
+			title=_("Shopify SKU Mapping"),
+			indicator="blue",
+		)
 
 	@frappe.whitelist()
 	def sync_all_items(self):
@@ -746,9 +640,161 @@ def _build_erpnext_sku_set() -> set[str]:
 	The Shopify connector uses item_code as SKU (product.py build_product_payload),
 	so a matching SKU string is itself the item_code -- no key-to-value mapping needed.
 	"""
-	return set(
-		frappe.get_all("Item", filters={"disabled": 0}, pluck="item_code")
-	)
+	return set(frappe.get_all("Item", filters={"disabled": 0}, pluck="item_code"))
+
+
+def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | None = None):
+	"""Background job: fetch products from Shopify and auto-map by SKU to ERPNext Items.
+
+	Args:
+		store_name: Shopify Store document name
+		initiating_user: User who triggered the job (for realtime notification)
+	"""
+	logger = get_logger()
+	logger.info("Starting SKU mapping job for store: %s", store_name)
+
+	store = frappe.get_doc("Shopify Store", store_name)
+	frappe.flags.in_sku_mapping = True
+
+	try:
+		store._init_shopify_api_versions()
+		auth_details = store._get_auth_details()
+
+		erpnext_skus = _build_erpnext_sku_set()
+		logger.info(
+			"Built ERPNext SKU set with %d entries for store: %s",
+			len(erpnext_skus),
+			store.shop_domain,
+		)
+
+		total_variants = 0
+		skipped_no_sku = 0
+		not_found = 0
+		updated = 0
+		created = 0
+		errors = 0
+
+		with Session.temp(*auth_details):
+			products_iter = PaginatedIterator(Product.find(limit=250))
+
+			for products_batch in products_iter:
+				for product in products_batch:
+					for variant in product.variants:
+						total_variants += 1
+						sku = (variant.sku or "").strip()
+
+						if not sku:
+							skipped_no_sku += 1
+							continue
+
+						if sku not in erpnext_skus:
+							not_found += 1
+							logger.info(
+								"SKU '%s' (product %s, variant %s) not found in ERPNext",
+								sku,
+								product.id,
+								variant.id,
+							)
+							continue
+
+						try:
+							action = _upsert_item_store_mapping(
+								item_code=sku,
+								store_name=store.name,
+								product_id=str(product.id),
+								variant_id=str(variant.id),
+								sku=sku,
+							)
+							if action == "updated":
+								updated += 1
+							else:
+								created += 1
+							frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- per-variant independent transaction
+						except Exception:
+							errors += 1
+							frappe.db.rollback()
+							logger.error(
+								"Failed to map SKU '%s'",
+								sku,
+								exc_info=True,
+							)
+							frappe.log_error(
+								message=frappe.get_traceback(),
+								title=_("SKU Mapping Error - {0}").format(store.shop_domain),
+							)
+							frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log after rollback
+
+		matched = updated + created
+		logger.info(
+			"SKU mapping complete for store %s: matched=%d, updated=%d, created=%d, "
+			"skipped_no_sku=%d, not_found=%d, errors=%d",
+			store.shop_domain,
+			matched,
+			updated,
+			created,
+			skipped_no_sku,
+			not_found,
+			errors,
+		)
+
+		message = _("SKU mapping complete for {0}.").format(store.shop_domain) + "<br><br>"
+		message += _("<b>Total Shopify variants scanned:</b> {0}").format(total_variants) + "<br>"
+		message += _("<b>Matched to NexWave items:</b> {0}").format(matched) + "<br>"
+		message += _("<b>&nbsp;&nbsp;— Updated existing:</b> {0}").format(updated) + "<br>"
+		message += _("<b>&nbsp;&nbsp;— Created new:</b> {0}").format(created) + "<br>"
+		message += _("<b>Skipped (no SKU on Shopify):</b> {0}").format(skipped_no_sku) + "<br>"
+		message += _("<b>Not found in NexWave:</b> {0}").format(not_found) + "<br>"
+		message += _("<b>Errors:</b> {0}").format(errors)
+
+		if errors > 0:
+			message += "<br><br>" + _("Check Error Log for details on failed mappings.")
+
+		create_shopify_log(
+			status="Success" if errors == 0 else "Warning",
+			method="fetch_products_and_map_by_sku",
+			shopify_store=store.name,
+			message=message,
+			reference_doctype="Shopify Store",
+			reference_name=store.name,
+		)
+
+		if initiating_user:
+			frappe.publish_realtime(
+				"msgprint",
+				{
+					"message": message,
+					"title": _("Shopify SKU Mapping"),
+					"indicator": "green" if errors == 0 else "orange",
+				},
+				user=initiating_user,
+			)
+
+	except Exception as e:
+		logger.error(
+			"Failed to fetch products and map by SKU for store: %s, error: %s",
+			store.shop_domain,
+			str(e),
+			exc_info=True,
+		)
+		frappe.db.rollback()
+		frappe.log_error(
+			message=frappe.get_traceback(),
+			title=_("Fetch Products & Map by SKU Failed - {0}").format(store.shop_domain),
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log after rollback
+
+		if initiating_user:
+			frappe.publish_realtime(
+				"msgprint",
+				{
+					"message": _("SKU mapping failed for {0}: {1}").format(store.shop_domain, str(e)),
+					"title": _("Shopify SKU Mapping"),
+					"indicator": "red",
+				},
+				user=initiating_user,
+			)
+	finally:
+		frappe.flags.in_sku_mapping = False
 
 
 def _upsert_item_store_mapping(
@@ -790,14 +836,11 @@ def _upsert_item_store_mapping(
 
 	existing_row = exact_row or blank_row
 	if existing_row:
-		frappe.db.set_value(
-			"Item Shopify Store", existing_row.name, update_data, update_modified=False
-		)
+		frappe.db.set_value("Item Shopify Store", existing_row.name, update_data, update_modified=False)
 		return "updated"
 
-	# No suitable row -- create new
-	item.reload()
-	item.append(
+	# No suitable row -- insert child row directly (no parent save, no on_update hook)
+	row = item.append(
 		"shopify_stores",
 		{
 			"shopify_store": store_name,
@@ -805,7 +848,5 @@ def _upsert_item_store_mapping(
 			**update_data,
 		},
 	)
-	item.flags.ignore_validate = True
-	item.flags.ignore_mandatory = True
-	item.save(ignore_permissions=True)
+	row.db_insert()
 	return "created"
