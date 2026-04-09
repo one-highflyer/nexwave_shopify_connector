@@ -17,11 +17,36 @@ class ShopifyStoreItemField(Document):
 		erpnext_field: DF.Data
 		metafield_key: DF.Data | None
 		metafield_namespace: DF.Data | None
-		metafield_type: DF.Literal["", "single_line_text_field", "multi_line_text_field", "number_integer", "number_decimal", "boolean", "date", "json", "url", "color", "rating"]
+		metafield_type: DF.Literal[
+			"",
+			"single_line_text_field",
+			"multi_line_text_field",
+			"number_integer",
+			"number_decimal",
+			"boolean",
+			"date",
+			"json",
+			"url",
+			"color",
+			"rating",
+		]
 		parent: DF.Data
 		parentfield: DF.Data
 		parenttype: DF.Data
 		shopify_field_type: DF.Literal["Standard Field", "Metafield"]
-		shopify_standard_field: DF.Literal["", "body_html", "vendor", "product_type", "tags", "handle", "compare_at_price", "price", "weight", "weight_unit", "barcode", "sku"]
+		shopify_standard_field: DF.Literal[
+			"",
+			"body_html",
+			"vendor",
+			"product_type",
+			"tags",
+			"handle",
+			"compare_at_price",
+			"price",
+			"weight",
+			"weight_unit",
+			"barcode",
+			"sku",
+		]
 	# end: auto-generated types
 	pass

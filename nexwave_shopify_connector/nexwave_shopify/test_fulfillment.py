@@ -207,14 +207,10 @@ class TestFulfillmentDeduplication(FrappeTestCase):
 		create_stock_entry(self.item_code, qty=20)
 
 		store = get_or_create_test_shopify_store(auto_fulfill_remaining_qty=0)
-		so = create_test_sales_order(
-			self.customer, self.item_code, qty=10, shopify_order_id="12345"
-		)
+		so = create_test_sales_order(self.customer, self.item_code, qty=10, shopify_order_id="12345")
 		create_test_delivery_note(so, qty=3, submit=True)
 
-		payload = create_test_fulfillment_payload(
-			"12345", [{"sku": self.item_code, "quantity": 10}]
-		)
+		payload = create_test_fulfillment_payload("12345", [{"sku": self.item_code, "quantity": 10}])
 
 		result = create_delivery_notes_from_fulfillments(payload, store)
 
@@ -228,14 +224,10 @@ class TestFulfillmentDeduplication(FrappeTestCase):
 		create_stock_entry(self.item_code, qty=20)
 
 		store = get_or_create_test_shopify_store(auto_fulfill_remaining_qty=1)
-		so = create_test_sales_order(
-			self.customer, self.item_code, qty=10, shopify_order_id="12346"
-		)
+		so = create_test_sales_order(self.customer, self.item_code, qty=10, shopify_order_id="12346")
 		create_test_delivery_note(so, qty=3, submit=True)
 
-		payload = create_test_fulfillment_payload(
-			"12346", [{"sku": self.item_code, "quantity": 10}]
-		)
+		payload = create_test_fulfillment_payload("12346", [{"sku": self.item_code, "quantity": 10}])
 
 		result = create_delivery_notes_from_fulfillments(payload, store)
 
@@ -249,13 +241,9 @@ class TestFulfillmentDeduplication(FrappeTestCase):
 		create_stock_entry(self.item_code, qty=20)
 
 		store = get_or_create_test_shopify_store(auto_fulfill_remaining_qty=0)
-		so = create_test_sales_order(
-			self.customer, self.item_code, qty=10, shopify_order_id="12347"
-		)
+		create_test_sales_order(self.customer, self.item_code, qty=10, shopify_order_id="12347")
 
-		payload = create_test_fulfillment_payload(
-			"12347", [{"sku": self.item_code, "quantity": 10}]
-		)
+		payload = create_test_fulfillment_payload("12347", [{"sku": self.item_code, "quantity": 10}])
 
 		result = create_delivery_notes_from_fulfillments(payload, store)
 
@@ -266,14 +254,10 @@ class TestFulfillmentDeduplication(FrappeTestCase):
 	def test_draft_dn_blocks_creation_when_setting_off(self):
 		"""Draft DN also blocks creation when setting is OFF."""
 		store = get_or_create_test_shopify_store(auto_fulfill_remaining_qty=0)
-		so = create_test_sales_order(
-			self.customer, self.item_code, qty=10, shopify_order_id="12348"
-		)
+		so = create_test_sales_order(self.customer, self.item_code, qty=10, shopify_order_id="12348")
 		create_test_delivery_note(so, qty=3, submit=False)  # Draft - no stock needed
 
-		payload = create_test_fulfillment_payload(
-			"12348", [{"sku": self.item_code, "quantity": 10}]
-		)
+		payload = create_test_fulfillment_payload("12348", [{"sku": self.item_code, "quantity": 10}])
 
 		result = create_delivery_notes_from_fulfillments(payload, store)
 
@@ -286,14 +270,10 @@ class TestFulfillmentDeduplication(FrappeTestCase):
 		create_stock_entry(self.item_code, qty=20)
 
 		store = get_or_create_test_shopify_store(auto_fulfill_remaining_qty=1)
-		so = create_test_sales_order(
-			self.customer, self.item_code, qty=10, shopify_order_id="12349"
-		)
+		so = create_test_sales_order(self.customer, self.item_code, qty=10, shopify_order_id="12349")
 		create_test_delivery_note(so, qty=10, submit=True)  # Fully delivered
 
-		payload = create_test_fulfillment_payload(
-			"12349", [{"sku": self.item_code, "quantity": 10}]
-		)
+		payload = create_test_fulfillment_payload("12349", [{"sku": self.item_code, "quantity": 10}])
 
 		result = create_delivery_notes_from_fulfillments(payload, store)
 

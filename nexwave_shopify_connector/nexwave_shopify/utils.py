@@ -103,18 +103,20 @@ def create_shopify_log(
 	if not shopify_store:
 		shopify_store = frappe.flags.get("shopify_store")
 
-	log = frappe.get_doc({
-		"doctype": "NexWave Shopify Log",
-		"status": status,
-		"shopify_store": shopify_store,
-		"method": method,
-		"reference_doctype": reference_doctype,
-		"reference_name": reference_name,
-		"request_data": json.dumps(request_data, indent=2) if request_data else None,
-		"response_data": json.dumps(response_data, indent=2) if response_data else None,
-		"message": message,
-		"traceback": exception,
-	})
+	log = frappe.get_doc(
+		{
+			"doctype": "NexWave Shopify Log",
+			"status": status,
+			"shopify_store": shopify_store,
+			"method": method,
+			"reference_doctype": reference_doctype,
+			"reference_name": reference_name,
+			"request_data": json.dumps(request_data, indent=2) if request_data else None,
+			"response_data": json.dumps(response_data, indent=2) if response_data else None,
+			"message": message,
+			"traceback": exception,
+		}
+	)
 
 	log.insert(ignore_permissions=True)
 	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- error logging must persist even if caller rolls back
@@ -233,11 +235,7 @@ def get_eligible_stores_for_item(item: "Document") -> list:
 	eligible_stores = []
 
 	# Get all enabled stores with item sync enabled
-	stores = frappe.get_all(
-		"Shopify Store",
-		filters={"enabled": 1, "enable_item_sync": 1},
-		pluck="name"
-	)
+	stores = frappe.get_all("Shopify Store", filters={"enabled": 1, "enable_item_sync": 1}, pluck="name")
 
 	for store_name in stores:
 		store = frappe.get_doc("Shopify Store", store_name)

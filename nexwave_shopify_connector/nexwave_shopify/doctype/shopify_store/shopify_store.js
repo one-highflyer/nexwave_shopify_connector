@@ -17,7 +17,7 @@ frappe.ui.form.on("Shopify Store", {
 					() => {
 						frm.trigger("initiate_oauth");
 					},
-					__("Actions"),
+					__("Actions")
 				);
 			}
 			frm.add_custom_button(
@@ -30,7 +30,7 @@ frappe.ui.form.on("Shopify Store", {
 						freeze_message: __("Testing connection..."),
 					});
 				},
-				__("Actions"),
+				__("Actions")
 			);
 
 			frm.add_custom_button(
@@ -60,7 +60,7 @@ frappe.ui.form.on("Shopify Store", {
 						},
 					});
 				},
-				__("Actions"),
+				__("Actions")
 			);
 
 			frm.add_custom_button(
@@ -68,7 +68,7 @@ frappe.ui.form.on("Shopify Store", {
 				function () {
 					frappe.confirm(
 						__(
-							"This will fetch all products from Shopify and create Item Shopify Store mappings for items with matching SKUs. You will be notified when the job completes. Continue?",
+							"This will fetch all products from Shopify and create Item Shopify Store mappings for items with matching SKUs. You will be notified when the job completes. Continue?"
 						),
 						function () {
 							frm.call({
@@ -77,10 +77,10 @@ frappe.ui.form.on("Shopify Store", {
 								freeze: true,
 								freeze_message: __("Queuing SKU mapping job..."),
 							});
-						},
+						}
 					);
 				},
-				__("Actions"),
+				__("Actions")
 			);
 
 			frm.add_custom_button(
@@ -111,7 +111,7 @@ frappe.ui.form.on("Shopify Store", {
 						},
 					});
 				},
-				__("Actions"),
+				__("Actions")
 			);
 
 			frm.add_custom_button(
@@ -119,7 +119,7 @@ frappe.ui.form.on("Shopify Store", {
 				function () {
 					frappe.confirm(
 						__(
-							"This will re-register all webhooks with Shopify. Existing webhooks for this site will be cleared first. Continue?",
+							"This will re-register all webhooks with Shopify. Existing webhooks for this site will be cleared first. Continue?"
 						),
 						function () {
 							frm.call({
@@ -128,10 +128,10 @@ frappe.ui.form.on("Shopify Store", {
 								freeze: true,
 								freeze_message: __("Registering webhooks with Shopify..."),
 							});
-						},
+						}
 					);
 				},
-				__("Actions"),
+				__("Actions")
 			);
 
 			frm.add_custom_button(
@@ -161,7 +161,7 @@ frappe.ui.form.on("Shopify Store", {
 								<td>${w.topic}</td>
 								<td>${w.id}</td>
 								<td style="word-break: break-all;">${w.address}</td>
-							</tr>`,
+							</tr>`
 								)
 								.join("");
 
@@ -194,7 +194,7 @@ frappe.ui.form.on("Shopify Store", {
 						},
 					});
 				},
-				__("Actions"),
+				__("Actions")
 			);
 
 			// Sync buttons - only show when relevant settings are enabled
@@ -204,7 +204,7 @@ frappe.ui.form.on("Shopify Store", {
 					function () {
 						frappe.confirm(
 							__(
-								"This will sync all eligible items to Shopify. This may take a while for large catalogs. Continue?",
+								"This will sync all eligible items to Shopify. This may take a while for large catalogs. Continue?"
 							),
 							function () {
 								frm.call({
@@ -213,10 +213,10 @@ frappe.ui.form.on("Shopify Store", {
 									freeze: true,
 									freeze_message: __("Queuing items for sync..."),
 								});
-							},
+							}
 						);
 					},
-					__("Sync"),
+					__("Sync")
 				);
 			}
 
@@ -226,7 +226,7 @@ frappe.ui.form.on("Shopify Store", {
 					function () {
 						frappe.confirm(
 							__(
-								"This will sync inventory levels to Shopify for all mapped items. Continue?",
+								"This will sync inventory levels to Shopify for all mapped items. Continue?"
 							),
 							function () {
 								frm.call({
@@ -235,10 +235,10 @@ frappe.ui.form.on("Shopify Store", {
 									freeze: true,
 									freeze_message: __("Queuing inventory sync..."),
 								});
-							},
+							}
 						);
 					},
-					__("Sync"),
+					__("Sync")
 				);
 			}
 
@@ -248,7 +248,7 @@ frappe.ui.form.on("Shopify Store", {
 					function () {
 						frappe.confirm(
 							__(
-								"This will fetch new orders from Shopify and create Sales Orders. Continue?",
+								"This will fetch new orders from Shopify and create Sales Orders. Continue?"
 							),
 							function () {
 								frm.call({
@@ -260,10 +260,10 @@ frappe.ui.form.on("Shopify Store", {
 										frm.reload_doc();
 									},
 								});
-							},
+							}
 						);
 					},
-					__("Sync"),
+					__("Sync")
 				);
 			}
 		}
@@ -427,8 +427,8 @@ frappe.ui.form.on("Shopify Store", {
 			error: (r) => {
 				frappe.msgprint(
 					__(
-						"Failed to initiate OAuth flow. Please check your Client ID and Client Secret.",
-					),
+						"Failed to initiate OAuth flow. Please check your Client ID and Client Secret."
+					)
 				);
 			},
 		});
@@ -438,14 +438,14 @@ frappe.ui.form.on("Shopify Store", {
 		if (frm.doc.oauth_status === "Connected" && frm.doc.connected_user) {
 			frm.dashboard.set_headline_alert(
 				__("Connected to Shopify via OAuth as {0}", [frm.doc.connected_user]),
-				"green",
+				"green"
 			);
 		} else if (frm.doc.client_id) {
 			frm.dashboard.set_headline_alert(
 				__(
-					"OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize.",
+					"OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize."
 				),
-				"yellow",
+				"yellow"
 			);
 		}
 	},

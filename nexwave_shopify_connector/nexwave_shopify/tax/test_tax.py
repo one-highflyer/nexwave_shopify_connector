@@ -19,6 +19,7 @@ Or run specific test class:
 """
 
 import json
+from typing import ClassVar
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -334,7 +335,7 @@ class TestTaxBuilder(FrappeTestCase):
 	"""Tests for TaxBuilder class - main orchestrator."""
 
 	# Test item codes used in tests
-	TEST_ITEM_CODES = ["TAXABLE-001", "ZERO-001"]
+	TEST_ITEM_CODES: ClassVar[list] = ["TAXABLE-001", "ZERO-001"]
 
 	@classmethod
 	def setUpClass(cls):
@@ -674,7 +675,7 @@ class TestErrorHandling(FrappeTestCase):
 	"""Tests for error handling in configuration validation."""
 
 	# Test item codes used in tests
-	TEST_ITEM_CODES = ["ITEM-001"]
+	TEST_ITEM_CODES: ClassVar[list] = ["ITEM-001"]
 
 	@classmethod
 	def setUpClass(cls):
@@ -788,7 +789,7 @@ class TestItemTaxTemplateSupport(FrappeTestCase):
 	"""Tests for Item Tax Template support in tax handling."""
 
 	# Test item codes used in tests
-	TEST_ITEM_CODES = ["TAXABLE-001", "ZERO-001", "DUMMY"]
+	TEST_ITEM_CODES: ClassVar[list] = ["TAXABLE-001", "ZERO-001", "DUMMY"]
 
 	@classmethod
 	def setUpClass(cls):
