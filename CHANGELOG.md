@@ -1,3 +1,15 @@
+## [1.11.11](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.10...v1.11.11) (2026-04-09)
+
+
+### Bug Fixes
+
+* **product:** use job_id with deduplicate for SKU mapping job ([c14a042](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c14a042f335fd5d0663737c2da8db79cc1facd94))
+* **sku-mapping:** skip sync_item_to_shopify during bulk SKU mapping ([a9ab3ff](https://github.com/one-highflyer/nexwave_shopify_connector/commit/a9ab3ff9e195ab0da44af44c013580480bc663cc))
+* **sku-mapping:** update JS button text for async SKU mapping job ([c7d3ded](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c7d3dedd5bae1ca8f7b6db6d1f1644d4b2e66fd6))
+* **sku-mapping:** use db_insert in _update_item_shopify_store_row create path ([b42a33d](https://github.com/one-highflyer/nexwave_shopify_connector/commit/b42a33d2154c75a7d6120bf411e628eac1541f66))
+* **sku-mapping:** use db_insert in _upsert_item_store_mapping create path ([a906cb3](https://github.com/one-highflyer/nexwave_shopify_connector/commit/a906cb331fef3b585dd78013a107c3101917560e))
+* **test:** use leaf customer group in test fixture ([59035a0](https://github.com/one-highflyer/nexwave_shopify_connector/commit/59035a0b93561a0b70073d3de3d2b3f35261a0c3))
+
 ## [1.11.10](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.9...v1.11.10) (2026-04-04)
 
 
