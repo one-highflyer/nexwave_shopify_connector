@@ -53,13 +53,13 @@ frappe.ui.form.on("Shopify Store", {
 
 			frm.add_custom_button(__("Fetch Products & Map by SKU"), function () {
 				frappe.confirm(
-					__("This will fetch all products from Shopify and create Item Shopify Store mappings for items with matching SKUs. Continue?"),
+					__("This will fetch all products from Shopify and create Item Shopify Store mappings for items with matching SKUs. You will be notified when the job completes. Continue?"),
 					function () {
 						frm.call({
 							method: "fetch_products_and_map_by_sku",
 							doc: frm.doc,
 							freeze: true,
-							freeze_message: __("Fetching products and mapping...")
+							freeze_message: __("Queuing SKU mapping job...")
 						});
 					}
 				);
