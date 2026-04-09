@@ -1,3 +1,11 @@
+## [1.11.13](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.12...v1.11.13) (2026-04-09)
+
+
+### Bug Fixes
+
+* **inventory:** increase sync job timeout to 3 hours ([289ead9](https://github.com/one-highflyer/nexwave_shopify_connector/commit/289ead94847a278017f50420c51c925dddf24dc3))
+* **product:** log failed SKU mapping jobs to NexWave Shopify Log ([f2cdad0](https://github.com/one-highflyer/nexwave_shopify_connector/commit/f2cdad01f05aef0390f0ea1d4159fdc3d97c8176))
+
 ## [1.11.12](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.11...v1.11.12) (2026-04-09)
 
 
