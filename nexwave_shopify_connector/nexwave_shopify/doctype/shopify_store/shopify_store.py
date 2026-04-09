@@ -795,9 +795,8 @@ def _upsert_item_store_mapping(
 		)
 		return "updated"
 
-	# No suitable row -- create new
-	item.reload()
-	item.append(
+	# No suitable row -- insert child row directly (no parent save, no on_update hook)
+	row = item.append(
 		"shopify_stores",
 		{
 			"shopify_store": store_name,
@@ -805,7 +804,5 @@ def _upsert_item_store_mapping(
 			**update_data,
 		},
 	)
-	item.flags.ignore_validate = True
-	item.flags.ignore_mandatory = True
-	item.save(ignore_permissions=True)
+	row.db_insert()
 	return "created"
