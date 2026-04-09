@@ -1,3 +1,10 @@
+## [1.11.12](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.11...v1.11.12) (2026-04-09)
+
+
+### Bug Fixes
+
+* **inventory:** deduplicate manual inventory sync job ([a57749a](https://github.com/one-highflyer/nexwave_shopify_connector/commit/a57749af22ba5569211c1f9f1b0a6a1d7028ba43))
+
 ## [1.11.11](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.10...v1.11.11) (2026-04-09)
 
 
