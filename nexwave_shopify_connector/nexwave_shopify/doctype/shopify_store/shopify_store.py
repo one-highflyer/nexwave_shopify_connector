@@ -640,9 +640,7 @@ def _build_erpnext_sku_set() -> set[str]:
 	The Shopify connector uses item_code as SKU (product.py build_product_payload),
 	so a matching SKU string is itself the item_code -- no key-to-value mapping needed.
 	"""
-	return set(
-		frappe.get_all("Item", filters={"disabled": 0}, pluck="item_code")
-	)
+	return set(frappe.get_all("Item", filters={"disabled": 0}, pluck="item_code"))
 
 
 def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | None = None):
@@ -711,7 +709,7 @@ def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | N
 								updated += 1
 							else:
 								created += 1
-							frappe.db.commit()
+							frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- per-variant independent transaction
 						except Exception:
 							errors += 1
 							frappe.db.rollback()
@@ -724,7 +722,7 @@ def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | N
 								message=frappe.get_traceback(),
 								title=_("SKU Mapping Error - {0}").format(store.shop_domain),
 							)
-							frappe.db.commit()
+							frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log after rollback
 
 		matched = updated + created
 		logger.info(
@@ -783,7 +781,7 @@ def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | N
 			message=frappe.get_traceback(),
 			title=_("Fetch Products & Map by SKU Failed - {0}").format(store.shop_domain),
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- persist error log after rollback
 
 		if initiating_user:
 			frappe.publish_realtime(
@@ -838,9 +836,7 @@ def _upsert_item_store_mapping(
 
 	existing_row = exact_row or blank_row
 	if existing_row:
-		frappe.db.set_value(
-			"Item Shopify Store", existing_row.name, update_data, update_modified=False
-		)
+		frappe.db.set_value("Item Shopify Store", existing_row.name, update_data, update_modified=False)
 		return "updated"
 
 	# No suitable row -- insert child row directly (no parent save, no on_update hook)
