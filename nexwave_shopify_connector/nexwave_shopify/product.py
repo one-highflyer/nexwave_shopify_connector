@@ -46,6 +46,10 @@ def sync_item_to_shopify(doc, method=None):
 	if frappe.flags.in_test or frappe.flags.in_import:
 		return
 
+	# Skip during bulk SKU mapping to avoid N unnecessary enqueued sync jobs
+	if getattr(frappe.flags, "in_sku_mapping", False):
+		return
+
 	# Skip if item is disabled
 	if doc.disabled:
 		return
