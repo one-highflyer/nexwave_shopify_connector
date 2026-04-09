@@ -6,4 +6,4 @@ def before_tests():
 	import time. Importing it here ensures the data exists before Frappe's
 	test record preloading tries to create documents that depend on them.
 	"""
-	import erpnext.tests.utils  # noqa: F401
+	import erpnext.tests.utils
