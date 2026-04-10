@@ -2,7 +2,7 @@
 # For license information, please see license.txt
 
 import time
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 import frappe
 from frappe import _
@@ -41,7 +41,7 @@ def update_inventory_on_shopify():
 		frappe.enqueue(
 			"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 			queue="long",
-			timeout=3600,  # 1 hour timeout for large inventories
+			timeout=10800,  # 3 hour timeout for large inventories
 			store_name=store_name,
 		)
 
@@ -242,7 +242,7 @@ def sync_store_inventory(store_name: str):
 			status="Error",
 			method="sync_store_inventory",
 			shopify_store=store_name,
-			message=f"Store-level sync error: {str(e)}",
+			message=f"Store-level sync error: {e!s}",
 			exception=frappe.get_traceback(),
 			reference_doctype="Shopify Store",
 			reference_name=store_name,
@@ -270,7 +270,7 @@ def _init_shopify_api_versions():
 		ApiVersion.fetch_known_versions()
 
 
-def get_items_with_shopify_ids(store_name: str) -> List[Dict]:
+def get_items_with_shopify_ids(store_name: str) -> list[dict]:
 	"""
 	Get all items that have Shopify product/variant IDs for this store.
 
@@ -300,7 +300,7 @@ def get_items_with_shopify_ids(store_name: str) -> List[Dict]:
 	)
 
 
-def _sync_item_inventory(item_data: Dict, store) -> bool:
+def _sync_item_inventory(item_data: dict, store) -> bool:
 	"""
 	Sync inventory for a single item to all mapped Shopify locations.
 
@@ -381,7 +381,7 @@ def _set_inventory_level(location_id: str, inventory_item_id: str, qty: float):
 	InventoryLevel.set(location_id=location_id, inventory_item_id=inventory_item_id, available=qty)
 
 
-def sync_single_item_inventory(item_code: str, store_name: Optional[str] = None):
+def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 	"""
 	Sync inventory for a single item to one or all stores.
 
@@ -443,7 +443,7 @@ def sync_single_item_inventory(item_code: str, store_name: Optional[str] = None)
 		except Exception as e:
 			frappe.log_error(
 				title=f"Shopify Inventory Sync Error - {store.name}",
-				message=f"Failed to sync inventory for {item_code}: {str(e)}",
+				message=f"Failed to sync inventory for {item_code}: {e!s}",
 			)
 
 
@@ -476,7 +476,9 @@ def manual_inventory_sync(store_name: str):
 	frappe.enqueue(
 		"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 		queue="long",
-		timeout=3600,
+		timeout=10800,
+		job_id=f"inventory_sync_{store_name}",
+		deduplicate=True,
 		store_name=store_name,
 	)
 

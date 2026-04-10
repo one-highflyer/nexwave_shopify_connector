@@ -25,8 +25,8 @@ from nexwave_shopify_connector.nexwave_shopify.tax.rounding import apply_roundin
 from nexwave_shopify_connector.nexwave_shopify.tax.shipping import ShippingTaxHandler
 
 __all__ = [
+	"ShippingTaxHandler",
 	"TaxBuilder",
 	"TaxDetector",
-	"ShippingTaxHandler",
 	"apply_rounding_adjustment",
 ]

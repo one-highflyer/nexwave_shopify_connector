@@ -12,126 +12,160 @@ frappe.ui.form.on("Shopify Store", {
 		if (!frm.is_new()) {
 			// Show "Connect to Shopify" button for OAuth stores
 			if (frm.doc.auth_method === "OAuth" && frm.doc.client_id) {
-				frm.add_custom_button(__("Connect to Shopify"), () => {
-					frm.trigger("initiate_oauth");
-				}, __("Actions"));
+				frm.add_custom_button(
+					__("Connect to Shopify"),
+					() => {
+						frm.trigger("initiate_oauth");
+					},
+					__("Actions")
+				);
 			}
-			frm.add_custom_button(__("Test Connection"), function () {
-				frm.call({
-					method: "test_connection",
-					doc: frm.doc,
-					freeze: true,
-					freeze_message: __("Testing connection...")
-				});
-			}, __("Actions"));
+			frm.add_custom_button(
+				__("Test Connection"),
+				function () {
+					frm.call({
+						method: "test_connection",
+						doc: frm.doc,
+						freeze: true,
+						freeze_message: __("Testing connection..."),
+					});
+				},
+				__("Actions")
+			);
 
-			frm.add_custom_button(__("Fetch Shopify Locations"), function () {
-				frm.call({
-					method: "fetch_shopify_locations",
-					doc: frm.doc,
-					freeze: true,
-					freeze_message: __("Fetching locations..."),
-					callback: function (r) {
-						if (r.message) {
-							// Clear existing rows
-							frm.clear_table("warehouse_mapping");
+			frm.add_custom_button(
+				__("Fetch Shopify Locations"),
+				function () {
+					frm.call({
+						method: "fetch_shopify_locations",
+						doc: frm.doc,
+						freeze: true,
+						freeze_message: __("Fetching locations..."),
+						callback: function (r) {
+							if (r.message) {
+								// Clear existing rows
+								frm.clear_table("warehouse_mapping");
 
-							// Add fetched locations to the table
-							r.message.forEach(function (location) {
-								let row = frm.add_child("warehouse_mapping");
-								row.shopify_location_id = location.shopify_location_id;
-								row.shopify_location_name = location.shopify_location_name;
-								row.erpnext_warehouse = location.erpnext_warehouse;
+								// Add fetched locations to the table
+								r.message.forEach(function (location) {
+									let row = frm.add_child("warehouse_mapping");
+									row.shopify_location_id = location.shopify_location_id;
+									row.shopify_location_name = location.shopify_location_name;
+									row.erpnext_warehouse = location.erpnext_warehouse;
+								});
+
+								// Refresh the field to show updated data
+								frm.refresh_field("warehouse_mapping");
+							}
+						},
+					});
+				},
+				__("Actions")
+			);
+
+			frm.add_custom_button(
+				__("Fetch Products & Map by SKU"),
+				function () {
+					frappe.confirm(
+						__(
+							"This will fetch all products from Shopify and create Item Shopify Store mappings for items with matching SKUs. You will be notified when the job completes. Continue?"
+						),
+						function () {
+							frm.call({
+								method: "fetch_products_and_map_by_sku",
+								doc: frm.doc,
+								freeze: true,
+								freeze_message: __("Queuing SKU mapping job..."),
 							});
-
-							// Refresh the field to show updated data
-							frm.refresh_field("warehouse_mapping");
 						}
-					}
-				});
-			}, __("Actions"));
+					);
+				},
+				__("Actions")
+			);
 
-			frm.add_custom_button(__("Fetch Products & Map by SKU"), function () {
-				frappe.confirm(
-					__("This will fetch all products from Shopify and create Item Shopify Store mappings for items with matching SKUs. Continue?"),
-					function () {
-						frm.call({
-							method: "fetch_products_and_map_by_sku",
-							doc: frm.doc,
-							freeze: true,
-							freeze_message: __("Fetching products and mapping...")
-						});
-					}
-				);
-			}, __("Actions"));
+			frm.add_custom_button(
+				__("Fetch Shopify Collections"),
+				function () {
+					frm.call({
+						method: "fetch_shopify_collections",
+						doc: frm.doc,
+						freeze: true,
+						freeze_message: __("Fetching collections..."),
+						callback: function (r) {
+							if (r.message) {
+								// Clear existing rows
+								frm.clear_table("collection_mapping");
 
-			frm.add_custom_button(__("Fetch Shopify Collections"), function () {
-				frm.call({
-					method: "fetch_shopify_collections",
-					doc: frm.doc,
-					freeze: true,
-					freeze_message: __("Fetching collections..."),
-					callback: function (r) {
-						if (r.message) {
-							// Clear existing rows
-							frm.clear_table("collection_mapping");
+								// Add fetched collections to the table
+								r.message.forEach(function (collection) {
+									let row = frm.add_child("collection_mapping");
+									row.shopify_collection_id = collection.shopify_collection_id;
+									row.shopify_collection_title =
+										collection.shopify_collection_title;
+									row.field_value = collection.field_value;
+								});
 
-							// Add fetched collections to the table
-							r.message.forEach(function (collection) {
-								let row = frm.add_child("collection_mapping");
-								row.shopify_collection_id = collection.shopify_collection_id;
-								row.shopify_collection_title = collection.shopify_collection_title;
-								row.field_value = collection.field_value;
+								// Refresh the field to show updated data
+								frm.refresh_field("collection_mapping");
+							}
+						},
+					});
+				},
+				__("Actions")
+			);
+
+			frm.add_custom_button(
+				__("Register Webhooks"),
+				function () {
+					frappe.confirm(
+						__(
+							"This will re-register all webhooks with Shopify. Existing webhooks for this site will be cleared first. Continue?"
+						),
+						function () {
+							frm.call({
+								method: "register_webhooks",
+								doc: frm.doc,
+								freeze: true,
+								freeze_message: __("Registering webhooks with Shopify..."),
 							});
-
-							// Refresh the field to show updated data
-							frm.refresh_field("collection_mapping");
 						}
-					}
-				});
-			}, __("Actions"));
+					);
+				},
+				__("Actions")
+			);
 
-			frm.add_custom_button(__("Register Webhooks"), function () {
-				frappe.confirm(
-					__("This will re-register all webhooks with Shopify. Existing webhooks for this site will be cleared first. Continue?"),
-					function () {
-						frm.call({
-							method: "register_webhooks",
-							doc: frm.doc,
-							freeze: true,
-							freeze_message: __("Registering webhooks with Shopify...")
-						});
-					}
-				);
-			}, __("Actions"));
+			frm.add_custom_button(
+				__("Fetch Webhooks"),
+				function () {
+					frm.call({
+						method: "fetch_webhooks",
+						doc: frm.doc,
+						freeze: true,
+						freeze_message: __("Fetching webhooks from Shopify..."),
+						callback: function (r) {
+							let webhooks = r.message || [];
 
-			frm.add_custom_button(__("Fetch Webhooks"), function () {
-				frm.call({
-					method: "fetch_webhooks",
-					doc: frm.doc,
-					freeze: true,
-					freeze_message: __("Fetching webhooks from Shopify..."),
-					callback: function (r) {
-						let webhooks = r.message || [];
+							if (!webhooks.length) {
+								frappe.msgprint({
+									title: __("Shopify Webhooks"),
+									message: __("No webhooks registered for this site."),
+									indicator: "yellow",
+								});
+								return;
+							}
 
-						if (!webhooks.length) {
-							frappe.msgprint({
-								title: __("Shopify Webhooks"),
-								message: __("No webhooks registered for this site."),
-								indicator: "yellow"
-							});
-							return;
-						}
-
-						let rows = webhooks.map(w =>
-							`<tr>
+							let rows = webhooks
+								.map(
+									(w) =>
+										`<tr>
 								<td>${w.topic}</td>
 								<td>${w.id}</td>
 								<td style="word-break: break-all;">${w.address}</td>
 							</tr>`
-						).join("");
+								)
+								.join("");
 
-						let html = `
+							let html = `
 							<table class="table table-bordered" style="width: 100%;">
 								<thead>
 									<tr>
@@ -144,73 +178,93 @@ frappe.ui.form.on("Shopify Store", {
 							</table>
 						`;
 
-						let dialog = new frappe.ui.Dialog({
-							title: __("Registered Webhooks ({0})", [webhooks.length]),
-							size: "large",
-							fields: [
-								{
-									fieldtype: "HTML",
-									fieldname: "webhooks_html"
-								}
-							]
-						});
+							let dialog = new frappe.ui.Dialog({
+								title: __("Registered Webhooks ({0})", [webhooks.length]),
+								size: "large",
+								fields: [
+									{
+										fieldtype: "HTML",
+										fieldname: "webhooks_html",
+									},
+								],
+							});
 
-						dialog.fields_dict.webhooks_html.$wrapper.html(html);
-						dialog.show();
-					}
-				});
-			}, __("Actions"));
+							dialog.fields_dict.webhooks_html.$wrapper.html(html);
+							dialog.show();
+						},
+					});
+				},
+				__("Actions")
+			);
 
 			// Sync buttons - only show when relevant settings are enabled
 			if (frm.doc.enabled && frm.doc.enable_item_sync) {
-				frm.add_custom_button(__("Sync All Items"), function () {
-					frappe.confirm(
-						__("This will sync all eligible items to Shopify. This may take a while for large catalogs. Continue?"),
-						function () {
-							frm.call({
-								method: "sync_all_items",
-								doc: frm.doc,
-								freeze: true,
-								freeze_message: __("Queuing items for sync...")
-							});
-						}
-					);
-				}, __("Sync"));
+				frm.add_custom_button(
+					__("Sync All Items"),
+					function () {
+						frappe.confirm(
+							__(
+								"This will sync all eligible items to Shopify. This may take a while for large catalogs. Continue?"
+							),
+							function () {
+								frm.call({
+									method: "sync_all_items",
+									doc: frm.doc,
+									freeze: true,
+									freeze_message: __("Queuing items for sync..."),
+								});
+							}
+						);
+					},
+					__("Sync")
+				);
 			}
 
 			if (frm.doc.enabled && frm.doc.enable_inventory_sync) {
-				frm.add_custom_button(__("Sync Inventory"), function () {
-					frappe.confirm(
-						__("This will sync inventory levels to Shopify for all mapped items. Continue?"),
-						function () {
-							frm.call({
-								method: "sync_inventory",
-								doc: frm.doc,
-								freeze: true,
-								freeze_message: __("Queuing inventory sync...")
-							});
-						}
-					);
-				}, __("Sync"));
+				frm.add_custom_button(
+					__("Sync Inventory"),
+					function () {
+						frappe.confirm(
+							__(
+								"This will sync inventory levels to Shopify for all mapped items. Continue?"
+							),
+							function () {
+								frm.call({
+									method: "sync_inventory",
+									doc: frm.doc,
+									freeze: true,
+									freeze_message: __("Queuing inventory sync..."),
+								});
+							}
+						);
+					},
+					__("Sync")
+				);
 			}
 
 			if (frm.doc.enabled && frm.doc.sync_orders) {
-				frm.add_custom_button(__("Sync Orders"), function () {
-					frappe.confirm(
-						__("This will fetch new orders from Shopify and create Sales Orders. Continue?"),
-						function () {
-							frm.call({
-								method: "fetch_and_sync_orders",
-								doc: frm.doc,
-								freeze: true,
-								freeze_message: __("Syncing orders from Shopify..."),
-								callback: function (r) {
-									frm.reload_doc();
-								}
-							});
-						}
-					);
-				}, __("Sync"));
+				frm.add_custom_button(
+					__("Sync Orders"),
+					function () {
+						frappe.confirm(
+							__(
+								"This will fetch new orders from Shopify and create Sales Orders. Continue?"
+							),
+							function () {
+								frm.call({
+									method: "fetch_and_sync_orders",
+									doc: frm.doc,
+									freeze: true,
+									freeze_message: __("Syncing orders from Shopify..."),
+									callback: function (r) {
+										frm.reload_doc();
+									},
+								});
+							}
+						);
+					},
+					__("Sync")
+				);
 			}
 		}
 
@@ -222,8 +276,8 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					is_group: 0
-				}
+					is_group: 0,
+				},
 			};
 		});
 
@@ -232,8 +286,8 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					is_group: 0
-				}
+					is_group: 0,
+				},
 			};
 		});
 
@@ -242,8 +296,8 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					is_group: 0
-				}
+					is_group: 0,
+				},
 			};
 		});
 
@@ -252,16 +306,16 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					account_type: "Tax"
-				}
+					account_type: "Tax",
+				},
 			};
 		});
 
 		frm.set_query("default_shipping_charges_account", function () {
 			return {
 				filters: {
-					company: frm.doc.company
-				}
+					company: frm.doc.company,
+				},
 			};
 		});
 
@@ -270,8 +324,8 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					account_type: ["in", ["Bank", "Cash"]]
-				}
+					account_type: ["in", ["Bank", "Cash"]],
+				},
 			};
 		});
 
@@ -282,8 +336,8 @@ frappe.ui.form.on("Shopify Store", {
 					company: frm.doc.company,
 					account_type: "Tax",
 					is_group: 0,
-					disabled: 0
-				}
+					disabled: 0,
+				},
 			};
 		});
 
@@ -292,8 +346,8 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					disabled: 0
-				}
+					disabled: 0,
+				},
 			};
 		});
 
@@ -302,8 +356,8 @@ frappe.ui.form.on("Shopify Store", {
 			return {
 				filters: {
 					company: frm.doc.company,
-					disabled: 0
-				}
+					disabled: 0,
+				},
 			};
 		});
 
@@ -313,8 +367,8 @@ frappe.ui.form.on("Shopify Store", {
 				filters: {
 					company: frm.doc.company,
 					is_group: 0,
-					disabled: 0
-				}
+					disabled: 0,
+				},
 			};
 		});
 	},
@@ -360,7 +414,7 @@ frappe.ui.form.on("Shopify Store", {
 		frappe.call({
 			method: "nexwave_shopify_connector.nexwave_shopify.oauth.authorize",
 			args: {
-				shopify_store: frm.doc.name
+				shopify_store: frm.doc.name,
 			},
 			freeze: true,
 			freeze_message: __("Redirecting to Shopify..."),
@@ -371,8 +425,12 @@ frappe.ui.form.on("Shopify Store", {
 				}
 			},
 			error: (r) => {
-				frappe.msgprint(__("Failed to initiate OAuth flow. Please check your Client ID and Client Secret."));
-			}
+				frappe.msgprint(
+					__(
+						"Failed to initiate OAuth flow. Please check your Client ID and Client Secret."
+					)
+				);
+			},
 		});
 	},
 
@@ -384,7 +442,9 @@ frappe.ui.form.on("Shopify Store", {
 			);
 		} else if (frm.doc.client_id) {
 			frm.dashboard.set_headline_alert(
-				__("OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize."),
+				__(
+					"OAuth configured but not connected. Click 'Connect to Shopify' under Actions to authorize."
+				),
 				"yellow"
 			);
 		}
@@ -395,19 +455,20 @@ frappe.ui.form.on("Shopify Store", {
 		const doctypes = [
 			{ doctype: "Sales Order", field: "sales_order_series" },
 			{ doctype: "Delivery Note", field: "delivery_note_series" },
-			{ doctype: "Sales Invoice", field: "sales_invoice_series" }
+			{ doctype: "Sales Invoice", field: "sales_invoice_series" },
 		];
 
 		doctypes.forEach(function (item) {
 			frappe.model.with_doctype(item.doctype, function () {
-				let options = frappe.get_meta(item.doctype).fields
-					.find(df => df.fieldname === "naming_series");
+				let options = frappe
+					.get_meta(item.doctype)
+					.fields.find((df) => df.fieldname === "naming_series");
 				if (options && options.options) {
 					// Add empty option at the beginning for optional selection
-					let series_list = options.options.split("\n").filter(s => s.trim());
+					let series_list = options.options.split("\n").filter((s) => s.trim());
 					frm.set_df_property(item.field, "options", [""].concat(series_list));
 				}
 			});
 		});
-	}
+	},
 });
