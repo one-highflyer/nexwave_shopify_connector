@@ -173,7 +173,9 @@ def ensure_item_shopify_store_row(
 	"""Append or update an Item Shopify Store row on Item.
 
 	Idempotent: if a row already exists for (item, store), it is updated in
-	place.
+	place. Passing ``shopify_inventory_item_id=None`` explicitly clears the
+	cached id on an existing row (rather than leaving the stale value in
+	place).
 	"""
 	item = frappe.get_doc("Item", item_code)
 
@@ -188,9 +190,12 @@ def ensure_item_shopify_store_row(
 		"shopify_variant_id": shopify_variant_id,
 		"shopify_sku": item_code,
 		"enabled": 1,
+		# Always include the cache field so passing None explicitly clears
+		# a stale value on an existing row. Skipping on None would silently
+		# preserve the old cache value and diverge behaviour between new
+		# rows (blank default) and existing rows (stale value retained).
+		"shopify_inventory_item_id": shopify_inventory_item_id,
 	}
-	if shopify_inventory_item_id is not None:
-		data["shopify_inventory_item_id"] = shopify_inventory_item_id
 	data.update(overrides or {})
 
 	if existing:
