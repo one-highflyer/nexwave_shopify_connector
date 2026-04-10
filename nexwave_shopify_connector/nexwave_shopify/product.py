@@ -898,9 +898,9 @@ def _compute_image_hash(file_path: str) -> str:
 		MD5 hash string
 	"""
 	hash_md5 = hashlib.md5()
-	with (
+	with (  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal -- path from frappe.get_site_path(), not user input
 		open(file_path, "rb") as f
-	):  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal -- path from frappe.get_site_path(), not user input
+	):
 		for chunk in iter(lambda: f.read(4096), b""):
 			hash_md5.update(chunk)
 	return hash_md5.hexdigest()

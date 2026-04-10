@@ -348,9 +348,9 @@ def unregister_webhooks(store: Document) -> None:
 				webhook.destroy()
 
 
-@frappe.whitelist(
+@frappe.whitelist(  # nosemgrep: frappe-semgrep-rules.rules.security.guest-whitelisted-method -- Shopify webhook endpoint; HMAC-validated before processing
 	allow_guest=True
-)  # nosemgrep: frappe-semgrep-rules.rules.security.guest-whitelisted-method -- Shopify webhook endpoint; HMAC-validated before processing
+)
 def store_request_data() -> None:
 	"""
 	Webhook endpoint for Shopify.

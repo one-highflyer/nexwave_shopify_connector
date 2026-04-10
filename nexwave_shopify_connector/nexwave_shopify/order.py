@@ -188,9 +188,9 @@ def sync_sales_order(payload: dict, request_id: str | None = None, shopify_store
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user(
+		frappe.set_user(  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 			"Administrator"
-		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		)
 	else:
 		logger.info(
 			"[orders/create] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -285,9 +285,9 @@ def process_paid_order(payload: dict, request_id: str | None = None, shopify_sto
 
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user(
+		frappe.set_user(  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 			"Administrator"
-		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		)
 	else:
 		logger.info(
 			"[orders/paid] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -420,9 +420,9 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 	logger = get_logger()
 	# Set user context for permission checks (webhook runs as Guest)
 	if frappe.session.user == "Guest":
-		frappe.set_user(
+		frappe.set_user(  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 			"Administrator"
-		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		)
 	else:
 		logger.info(
 			"[orders/cancelled] Running as user %s, skipping elevation to Administrator", frappe.session.user
@@ -557,9 +557,9 @@ def sync_new_orders(shopify_store: str, from_date=None, to_date=None) -> dict:
 	logger = get_logger()
 	# Set user context for permission checks (manual sync may run as authenticated user)
 	if frappe.session.user == "Guest":
-		frappe.set_user(
+		frappe.set_user(  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
 			"Administrator"
-		)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser -- webhook/sync handler runs as Guest; needs Admin to create documents
+		)
 	else:
 		logger.info("Running order sync as user %s, skipping elevation to Administrator", frappe.session.user)
 	store = frappe.get_doc("Shopify Store", shopify_store)
