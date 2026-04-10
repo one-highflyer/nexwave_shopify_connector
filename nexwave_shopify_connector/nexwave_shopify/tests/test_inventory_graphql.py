@@ -167,6 +167,10 @@ class TestSetInventoryBatch(FrappeTestCase):
 		self.assertEqual(qty_entry["inventoryItemId"], "gid://shopify/InventoryItem/1001")
 		self.assertEqual(qty_entry["locationId"], "gid://shopify/Location/loc1")
 		self.assertEqual(qty_entry["quantity"], 5)
+		# I1: Assert other required payload fields sent to Shopify
+		self.assertEqual(variables["input"]["name"], "available")
+		self.assertIs(variables["input"]["ignoreCompareQuantity"], True)
+		self.assertEqual(variables["input"]["reason"], "correction")
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
 	def test_empty_quantities_returns_empty_batch_result(self, mock_exec):
