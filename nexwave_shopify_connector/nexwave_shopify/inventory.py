@@ -171,8 +171,23 @@ def sync_store_inventory(store_name: str, force: bool = False):
 	try:
 		with Session.temp(store.shop_domain, api_version, access_token):
 			# Lazy backfill: fill shopify_inventory_item_id on rows that are empty.
-			items_to_sync, skipped_backfill = _resolve_inventory_item_ids(store_name, items_to_sync, logger)
+			items_to_sync, skipped_backfill, errored_backfill = _resolve_inventory_item_ids(
+				store_name, items_to_sync, logger
+			)
 			total_skip += len(skipped_backfill)
+			total_error += len(errored_backfill)
+			# Log backfill failures as errors so the sync summary surfaces them
+			# instead of masking them as successful skips.
+			for item in errored_backfill:
+				create_shopify_log(
+					status="Error",
+					method="sync_store_inventory",
+					shopify_store=store_name,
+					message=f"Backfill failed for {item.get('item_code')}",
+					exception=item.get("_error_reason", ""),
+					reference_doctype="Item",
+					reference_name=item.get("item_code"),
+				)
 
 			# Iterate locations; for each build a list of quantity entries and
 			# chunk into INVENTORY_BATCH_SIZE mutations.
@@ -366,16 +381,21 @@ def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], f
 	return result
 
 
-def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> tuple[list[dict], list[dict]]:
+def _resolve_inventory_item_ids(
+	store_name: str, items: list[dict], logger
+) -> tuple[list[dict], list[dict], list[dict]]:
 	"""Ensure every item has shopify_inventory_item_id. Lazy-backfill via GraphQL nodes query.
 
 	Items already with a cached id are kept as-is. Items without a cached id are
-	looked up in batches. Variants that are missing from Shopify (deleted) or have
-	inventoryManagement != "SHOPIFY" are dropped from the returned list and counted
-	as skipped.
+	looked up in batches. Items are classified into three buckets:
+
+	- resolved: ready to sync (has inventory_item_id and tracking is enabled)
+	- skipped: intentionally not synced (variant deleted, tracking disabled, etc.)
+	- errored: failed to resolve due to a Shopify API error; these should be
+	  reported as errors in the sync summary, not silent skips.
 
 	Returns:
-		(filtered_items, skipped_items)
+		(resolved_items, skipped_items, errored_items)
 	"""
 	has_cache: list[dict] = []
 	needs_lookup: list[dict] = []
@@ -386,9 +406,10 @@ def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> t
 			needs_lookup.append(item)
 
 	skipped: list[dict] = []
+	errored: list[dict] = []
 
 	if not needs_lookup:
-		return has_cache, skipped
+		return has_cache, skipped, errored
 
 	logger.info(
 		"Backfilling inventory_item_id for %s items in store %s",
@@ -416,12 +437,13 @@ def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> t
 				e,
 				exc_info=True,
 			)
-			# Mark all in this chunk as skipped; we can't sync inventory without
-			# the inventory_item_id.
+			# Classify as errors (not skips). These items wanted to be synced
+			# but a Shopify API failure prevented it. The sync summary should
+			# surface this as an Error, not a silent skip.
 			for vid in chunk:
 				item = by_variant.get(vid)
 				if item:
-					skipped.append({**item, "_skip_reason": f"lookup_failed: {e}"})
+					errored.append({**item, "_error_reason": f"lookup_failed: {e}"})
 			continue
 
 		for vid in chunk:
@@ -438,16 +460,15 @@ def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> t
 				)
 				skipped.append({**item, "_skip_reason": "variant_not_found"})
 				continue
-			inv_mgmt = (info.get("inventory_management") or "").upper()
+			tracked = info.get("tracked", False)
 			inv_item_id = info.get("inventory_item_id")
-			if inv_mgmt != "SHOPIFY":
+			if not tracked:
 				logger.info(
-					"Variant %s (item %s) inventoryManagement=%s; skipping",
+					"Variant %s (item %s) inventory not tracked by Shopify; skipping",
 					vid,
 					item.get("item_code"),
-					inv_mgmt or "(none)",
 				)
-				skipped.append({**item, "_skip_reason": f"not_managed:{inv_mgmt}"})
+				skipped.append({**item, "_skip_reason": "not_tracked"})
 				continue
 			if not inv_item_id:
 				logger.info(
@@ -465,7 +486,7 @@ def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> t
 			enriched["shopify_inventory_item_id"] = str(inv_item_id)
 			resolved.append(enriched)
 
-	return has_cache + resolved, skipped
+	return has_cache + resolved, skipped, errored
 
 
 def _cache_inventory_item_id(item_code: str, store_name: str, inventory_item_id: str) -> None:
@@ -690,14 +711,31 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 
 		try:
 			with Session.temp(store.shop_domain, api_version, access_token):
-				items_payload, skipped = _resolve_inventory_item_ids(store.name, items_payload, logger)
+				items_payload, skipped, errored = _resolve_inventory_item_ids(
+					store.name, items_payload, logger
+				)
 				if not items_payload:
+					reasons = [s.get("_skip_reason") for s in skipped] + [
+						e.get("_error_reason") for e in errored
+					]
 					logger.info(
 						"Single-item sync skipped for %s -> %s (reasons=%s)",
 						item_code,
 						store.name,
-						[s.get("_skip_reason") for s in skipped],
+						reasons,
 					)
+					# If the skip was due to a backfill error (not a legitimate
+					# skip reason), log it as an Error so it's visible.
+					for e_item in errored:
+						create_shopify_log(
+							status="Error",
+							method="sync_single_item_inventory",
+							shopify_store=store.name,
+							message=f"Backfill failed for {item_code}",
+							exception=e_item.get("_error_reason", ""),
+							reference_doctype="Item",
+							reference_name=item_code,
+						)
 					continue
 
 				for location_id, warehouse in location_mapping:

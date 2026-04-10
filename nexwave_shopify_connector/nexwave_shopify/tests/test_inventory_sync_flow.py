@@ -172,7 +172,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
 
 		mock_fetch.return_value = {
-			"200": {"inventory_item_id": "9999", "inventory_management": "SHOPIFY"},
+			"200": {"inventory_item_id": "9999", "tracked": True},
 		}
 		mock_set.return_value = BatchResult(
 			succeeded=[self.item_a.name, self.item_b.name],
@@ -222,6 +222,76 @@ class TestSyncStoreInventory(FrappeTestCase):
 		item_codes = [q["item_code"] for q in quantities]
 		self.assertNotIn(self.item_a.name, item_codes)
 		self.assertIn(self.item_b.name, item_codes)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_lazy_backfill_failure_reported_as_error(self, mock_set, mock_fetch, mock_session):
+		"""Backfill API failures must be counted as errors, not silent skips.
+
+		Regression for the bug where a GraphQL schema error in the nodes query
+		caused all items to be marked "skipped" and the sync summary reported
+		status=Success with 0 errors, hiding the real problem.
+		"""
+		mock_session.temp = _noop_session
+		# Force both items to need backfill
+		frappe.db.sql(
+			"""
+			UPDATE `tabItem Shopify Store`
+			SET shopify_inventory_item_id = ''
+			WHERE parent IN (%s, %s) AND shopify_store = %s
+			""",
+			(self.item_a.name, self.item_b.name, self.store.name),
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			mock_fetch.side_effect = ShopifyGraphQLError("schema error", http_status=None)
+			mock_set.return_value = BatchResult(succeeded=[], failed=[], throttle=ThrottleStatus())
+
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_store_inventory
+
+			sync_store_inventory(self.store.name)
+
+			# set_inventory_batch should not be called at all — no items resolved
+			mock_set.assert_not_called()
+
+			# An Error log must exist for the backfill failure (not a Success summary)
+			error_logs = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"status": "Error",
+					"method": "sync_store_inventory",
+				},
+				fields=["message"],
+				order_by="creation desc",
+			)
+			backfill_errors = [
+				log for log in error_logs if log.get("message", "").startswith("Backfill failed")
+			]
+			self.assertTrue(
+				backfill_errors,
+				"Backfill API failure should create Error logs, not silent skips",
+			)
+
+			# last_inventory_sync must NOT be updated (H2 regression check)
+			last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+			self.assertIsNone(last_sync)
+		finally:
+			# Restore cache for other tests
+			frappe.db.sql(
+				"""
+				UPDATE `tabItem Shopify Store`
+				SET shopify_inventory_item_id = CASE parent
+					WHEN %s THEN '1001'
+					WHEN %s THEN '1002'
+				END
+				WHERE parent IN (%s, %s) AND shopify_store = %s
+				""",
+				(self.item_a.name, self.item_b.name, self.item_a.name, self.item_b.name, self.store.name),
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")

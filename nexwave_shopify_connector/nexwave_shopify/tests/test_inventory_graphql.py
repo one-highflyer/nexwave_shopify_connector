@@ -188,13 +188,11 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 				"nodes": [
 					{
 						"id": "gid://shopify/ProductVariant/2001",
-						"inventoryItem": {"id": "gid://shopify/InventoryItem/3001"},
-						"inventoryManagement": "SHOPIFY",
+						"inventoryItem": {"id": "gid://shopify/InventoryItem/3001", "tracked": True},
 					},
 					{
 						"id": "gid://shopify/ProductVariant/2002",
-						"inventoryItem": {"id": "gid://shopify/InventoryItem/3002"},
-						"inventoryManagement": "SHOPIFY",
+						"inventoryItem": {"id": "gid://shopify/InventoryItem/3002", "tracked": True},
 					},
 				]
 			}
@@ -202,7 +200,7 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 		result = fetch_inventory_item_ids(["2001", "2002"])
 		self.assertIn("2001", result)
 		self.assertEqual(result["2001"]["inventory_item_id"], "3001")
-		self.assertEqual(result["2001"]["inventory_management"], "SHOPIFY")
+		self.assertTrue(result["2001"]["tracked"])
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
 	def test_missing_variant_absent_from_result(self, mock_exec):
@@ -212,8 +210,7 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 					None,
 					{
 						"id": "gid://shopify/ProductVariant/2002",
-						"inventoryItem": {"id": "gid://shopify/InventoryItem/3002"},
-						"inventoryManagement": "SHOPIFY",
+						"inventoryItem": {"id": "gid://shopify/InventoryItem/3002", "tracked": True},
 					},
 				]
 			}
@@ -223,20 +220,19 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 		self.assertIn("2002", result)
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
-	def test_not_managed_still_returned_with_flag(self, mock_exec):
+	def test_not_tracked_still_returned_with_flag(self, mock_exec):
 		mock_exec.return_value = {
 			"data": {
 				"nodes": [
 					{
 						"id": "gid://shopify/ProductVariant/2001",
-						"inventoryItem": {"id": "gid://shopify/InventoryItem/3001"},
-						"inventoryManagement": "NOT_MANAGED",
+						"inventoryItem": {"id": "gid://shopify/InventoryItem/3001", "tracked": False},
 					}
 				]
 			}
 		}
 		result = fetch_inventory_item_ids(["2001"])
-		self.assertEqual(result["2001"]["inventory_management"], "NOT_MANAGED")
+		self.assertFalse(result["2001"]["tracked"])
 
 
 class TestExecuteGraphql(FrappeTestCase):

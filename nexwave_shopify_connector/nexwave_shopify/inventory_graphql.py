@@ -50,8 +50,10 @@ query variantInventoryItems($ids: [ID!]!) {
   nodes(ids: $ids) {
     ... on ProductVariant {
       id
-      inventoryItem { id }
-      inventoryManagement
+      inventoryItem {
+        id
+        tracked
+      }
     }
   }
 }
@@ -285,7 +287,7 @@ def fetch_inventory_item_ids(
 	logger=None,
 ) -> dict[str, dict]:
 	"""
-	Fetch inventory_item_id and inventoryManagement for up to 250 variants.
+	Fetch inventory_item_id and tracked flag for up to 250 variants.
 
 	Args:
 		variant_ids: Numeric variant IDs (strings).
@@ -293,7 +295,7 @@ def fetch_inventory_item_ids(
 	Returns:
 		Dict mapping numeric variant_id -> {
 			"inventory_item_id": str | None,
-			"inventory_management": str,
+			"tracked": bool,
 		}
 		Variants missing from the response are absent from the dict.
 	"""
@@ -328,7 +330,7 @@ def fetch_inventory_item_ids(
 
 		result[variant_id] = {
 			"inventory_item_id": inventory_item_id,
-			"inventory_management": node.get("inventoryManagement") or "",
+			"tracked": bool(inventory_item.get("tracked")) if inventory_item else False,
 		}
 
 	if logger:
