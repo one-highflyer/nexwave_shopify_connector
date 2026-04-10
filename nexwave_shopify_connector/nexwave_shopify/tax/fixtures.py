@@ -178,8 +178,10 @@ def load_shopify_order(filename: str) -> dict:
 	if not filepath.exists():
 		raise FileNotFoundError(f"Test data file not found: {filepath}")
 
-	with (  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal -- loading test fixture JSON from app's own data directory
-		open(filepath) as f
+	with (
+		open(
+			filepath
+		) as f  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal -- loading test fixture JSON from app's own data directory
 	):
 		return json.load(f)
 
