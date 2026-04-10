@@ -65,6 +65,22 @@ class TestSyncStoreInventory(FrappeTestCase):
 		set_bin_qty(cls.item_b.name, TEST_WAREHOUSE, 0)
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture persistence
 
+	@classmethod
+	def tearDownClass(cls):
+		# setUpClass commits fixtures so the framework's auto-rollback does
+		# not clean them up. Delete them explicitly so reruns are idempotent
+		# and the test site is not polluted. Order matters: Bin and Stock
+		# Ledger Entry before Item; Item before Shopify Store.
+		for item_code in (cls.item_a.name, cls.item_b.name):
+			frappe.db.delete("Bin", {"item_code": item_code})
+			frappe.db.delete("Stock Ledger Entry", {"item_code": item_code})
+			if frappe.db.exists("Item", item_code):
+				frappe.delete_doc("Item", item_code, force=True, ignore_missing=True)
+		if frappe.db.exists("Shopify Store", cls.store.name):
+			frappe.delete_doc("Shopify Store", cls.store.name, force=True, ignore_missing=True)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture cleanup
+		super().tearDownClass()
+
 	def setUp(self):
 		# Reset last_inventory_sync and cached ids so each test starts fresh
 		frappe.db.set_value("Shopify Store", self.store.name, "last_inventory_sync", None)
@@ -223,10 +239,10 @@ class TestSyncStoreInventory(FrappeTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
 	def test_bench_config_bailout_skips_store(self, mock_set, mock_session):
 		mock_session.temp = _noop_session
-		original_conf = frappe.conf
-		patched = frappe._dict(dict(original_conf or {}))
-		patched["nexwave_shopify_disable_graphql_inventory_sync"] = [self.store.name]
-		with patch.object(frappe, "conf", patched):
+		# Preserve existing conf keys while adding the bailout for this store
+		conf_override = frappe._dict(frappe.conf)
+		conf_override["nexwave_shopify_disable_graphql_inventory_sync"] = [self.store.name]
+		with patch.object(frappe, "conf", conf_override):
 			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_store_inventory
 
 			sync_store_inventory(self.store.name)

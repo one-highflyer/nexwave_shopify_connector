@@ -319,7 +319,12 @@ def fetch_inventory_item_ids(
 
 		inventory_item = node.get("inventoryItem") or {}
 		inventory_item_gid = (inventory_item or {}).get("id") or ""
-		inventory_item_id = inventory_item_gid.rsplit("/", 1)[-1] if inventory_item_gid else None
+		# Defensive: only extract when the GID matches the expected prefix,
+		# so a malformed response can't produce a bogus numeric id.
+		if inventory_item_gid.startswith("gid://shopify/InventoryItem/"):
+			inventory_item_id = inventory_item_gid.rsplit("/", 1)[-1] or None
+		else:
+			inventory_item_id = None
 
 		result[variant_id] = {
 			"inventory_item_id": inventory_item_id,

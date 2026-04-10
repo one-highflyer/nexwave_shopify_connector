@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe import _
 from frappe.utils import add_to_date, now_datetime
-from pyactiveresource.connection import ClientError
 from shopify.api_version import ApiVersion
 from shopify.session import Session
 
@@ -77,12 +76,15 @@ def _should_sync_inventory(store) -> bool:
 	return now_datetime() >= next_sync_time
 
 
-def sync_store_inventory(store_name: str):
+def sync_store_inventory(store_name: str, force: bool = False):
 	"""
 	Sync inventory for all items linked to a specific store.
 
 	Args:
 		store_name: Shopify Store name
+		force: When True, bypass the sync frequency check. Used by manual
+			triggers so the operator can re-run the sync immediately even if
+			the last successful sync was recent.
 	"""
 	logger = get_logger()
 	logger.info("Syncing inventory for Shopify store: %s", store_name)
@@ -102,8 +104,9 @@ def sync_store_inventory(store_name: str):
 
 	# Guard against duplicate jobs: with a single long-queue worker, duplicate
 	# jobs run sequentially. Re-check the sync interval with fresh DB data
-	# so that if a previous job already completed, this one skips.
-	if not _should_sync_inventory(store):
+	# so that if a previous job already completed, this one skips. Manual
+	# triggers pass force=True to bypass this check.
+	if not force and not _should_sync_inventory(store):
 		logger.info(
 			"Skipping inventory sync for %s, already synced at %s",
 			store_name,
@@ -192,6 +195,10 @@ def sync_store_inventory(store_name: str):
 						)
 					except ShopifyGraphQLError as e:
 						# Whole batch failed after retries
+						# TODO: per-item log fan-out for a 250-item batch can
+						# produce a burst of Error logs for a single root cause.
+						# Future PR: emit one aggregate Error log per failed
+						# batch and a debug logger line listing the item codes.
 						total_error += len(chunk)
 						for q in chunk:
 							create_shopify_log(
@@ -234,9 +241,14 @@ def sync_store_inventory(store_name: str):
 					)
 					_throttle_if_needed(result.throttle, logger)
 
-		# Update last sync time (only on success/warning path)
-		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
-		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
+		# Only update last_inventory_sync when the run made at least some
+		# progress OR had no errors. If every batch failed (bad token,
+		# malformed payload, all retries exhausted), bumping the timestamp
+		# would cause the scheduler to silently skip retries for the next
+		# inventory_sync_frequency interval.
+		if total_error == 0 or total_sync > 0:
+			frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 
 		# Determine overall status
 		if total_error > 0 and total_sync == 0:
@@ -248,7 +260,7 @@ def sync_store_inventory(store_name: str):
 
 		elapsed = int(time.monotonic() - t0)
 		summary = (
-			f"Sync complete: {total_sync} synced, {total_skip} skipped, " f"{total_error} errors, {elapsed}s"
+			f"Sync complete: {total_sync} synced, {total_skip} skipped, {total_error} errors, {elapsed}s"
 		)
 		logger.info("%s - store=%s status=%s", summary, store_name, status)
 		create_shopify_log(
@@ -457,20 +469,18 @@ def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> t
 
 
 def _cache_inventory_item_id(item_code: str, store_name: str, inventory_item_id: str) -> None:
-	"""Persist a resolved inventory_item_id back to the Item Shopify Store row."""
-	frappe.db.sql(
-		# nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- UPDATE, no commit
-		"""
-		UPDATE `tabItem Shopify Store`
-		SET shopify_inventory_item_id = %(inv_id)s
-		WHERE parent = %(item_code)s
-		  AND shopify_store = %(store_name)s
-		""",
-		{
-			"inv_id": inventory_item_id,
-			"item_code": item_code,
-			"store_name": store_name,
-		},
+	"""Cache the Shopify inventory_item_id back to Item Shopify Store.
+
+	Uses frappe.db.set_value (not get_doc + save) to bypass on_update hooks
+	and avoid recursion into product sync. Matches the pattern in
+	shopify_store._upsert_item_store_mapping.
+	"""
+	frappe.db.set_value(
+		"Item Shopify Store",
+		{"parent": item_code, "shopify_store": store_name},
+		"shopify_inventory_item_id",
+		inventory_item_id,
+		update_modified=False,
 	)
 
 
@@ -481,10 +491,18 @@ def _build_quantities_for_location(
 	qty_by_pair: dict[tuple[str, str], float],
 ) -> list[dict]:
 	"""Build a list of quantity change dicts for one Shopify location."""
+	logger = get_logger()
 	result: list[dict] = []
+	dropped = 0
 	for item in items:
 		inv_item_id = item.get("shopify_inventory_item_id")
 		if not inv_item_id:
+			# Upstream SQL in get_items_with_shopify_ids filters rows without
+			# a variant_id, and the lazy backfill resolves inventory_item_id
+			# for the rest. Anything still missing here would have been
+			# caught and marked skipped in _resolve_inventory_item_ids. Log
+			# a debug line just in case something slips through.
+			dropped += 1
 			continue
 		raw_qty = qty_by_pair.get((item["item_code"], warehouse), 0) or 0
 		# Clamp negative to 0 (Shopify doesn't accept negative)
@@ -497,11 +515,29 @@ def _build_quantities_for_location(
 				"qty": qty,
 			}
 		)
+	if dropped:
+		logger.debug(
+			"_build_quantities_for_location: dropped %s item(s) without inventory_item_id for location %s",
+			dropped,
+			location_id,
+		)
 	return result
 
 
 def _throttle_if_needed(throttle: ThrottleStatus, logger) -> None:
-	"""Sleep if throttle.currently_available < THROTTLE_MIN_AVAILABLE."""
+	"""Sleep if throttle.currently_available < THROTTLE_MIN_AVAILABLE.
+
+	Pause duration math:
+	- deficit: how many cost points we are below the safety floor.
+	- restore_rate: Shopify returns points per second (typically 50.0).
+	- deficit / restore_rate: raw seconds to recover back to the floor.
+	- Clamped to [0.5, 10.0] seconds so:
+	  * We never busy-loop (min 0.5s).
+	  * We never block a worker for a full minute on a single pause
+	    (max 10.0s). A long-running sync with repeated throttling still
+	    progresses; a stuck bucket surfaces as Shopify 429s instead of
+	    a silent stall.
+	"""
 	if throttle.currently_available >= THROTTLE_MIN_AVAILABLE:
 		return
 	deficit = THROTTLE_MIN_AVAILABLE - throttle.currently_available
@@ -519,24 +555,6 @@ def _throttle_if_needed(throttle: ThrottleStatus, logger) -> None:
 def _chunked(seq, size):
 	for i in range(0, len(seq), size):
 		yield seq[i : i + size]
-
-
-def _get_retry_after(e: ClientError) -> float:
-	"""Extract Retry-After seconds from a 429 response, defaulting to 2.0.
-
-	Kept for backward compatibility with code outside inventory.py.
-	"""
-	logger = get_logger()
-	headers = getattr(e.response, "headers", {})
-	# Case-insensitive lookup since headers are stored in a plain dict
-	for key, val in headers.items():
-		if key.lower() == "retry-after":
-			try:
-				return max(float(val), 1.0)
-			except (ValueError, TypeError):
-				logger.warning("Could not parse Retry-After header value: %r, defaulting to 2.0s", val)
-				break
-	return 2.0
 
 
 def _init_shopify_api_versions():
@@ -766,7 +784,9 @@ def manual_inventory_sync(store_name: str):
 		logger.error("No warehouse mappings configured for Shopify store: %s", store_name)
 		frappe.throw(_("No warehouse mappings configured"))
 
-	# Enqueue sync job
+	# Enqueue sync job with force=True so manual triggers bypass the
+	# per-store sync frequency guard. Without this, clicking "Sync Inventory"
+	# shortly after a successful run would silently no-op.
 	frappe.enqueue(
 		"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 		queue="long",
@@ -774,6 +794,7 @@ def manual_inventory_sync(store_name: str):
 		job_id=f"inventory_sync_{store_name}",
 		deduplicate=True,
 		store_name=store_name,
+		force=True,
 	)
 
 	frappe.msgprint(_("Inventory sync has been queued for {0}").format(store_name), indicator="green")
