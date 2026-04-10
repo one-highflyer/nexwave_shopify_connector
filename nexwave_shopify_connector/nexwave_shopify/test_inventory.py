@@ -25,18 +25,17 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import now_datetime
 
-from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
-	BatchResult,
-	ShopifyGraphQLError,
-	ThrottleStatus,
-)
-
-from .fixtures import (
+from nexwave_shopify_connector.nexwave_shopify._inventory_test_fixtures import (
 	TEST_WAREHOUSE,
 	ensure_item_shopify_store_row,
 	ensure_test_item,
 	ensure_test_shopify_store,
 	set_bin_qty,
+)
+from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
+	BatchResult,
+	ShopifyGraphQLError,
+	ThrottleStatus,
 )
 
 
@@ -88,6 +87,9 @@ class TestSyncStoreInventory(FrappeTestCase):
 		super().tearDownClass()
 
 	def setUp(self):
+		# Clear NexWave Shopify Log rows from prior tests so status
+		# assertions in this run can't be satisfied by stale logs.
+		frappe.db.delete("NexWave Shopify Log", {"shopify_store": self.store.name})
 		# Reset last_inventory_sync and cached ids so each test starts fresh
 		frappe.db.set_value("Shopify Store", self.store.name, "last_inventory_sync", None)
 		frappe.db.sql(
