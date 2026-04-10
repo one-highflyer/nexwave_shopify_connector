@@ -131,6 +131,80 @@ class TestSyncStoreInventory(FrappeTestCase):
 		self.assertIsNotNone(last_sync)
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_zero_progress_skip_reports_warning_not_success(self, mock_set, mock_fetch, mock_session):
+		"""If every item is skipped (e.g. all untracked), status must be Warning.
+
+		Regression: previously total_sync=0 + total_error=0 reported as
+		Success and bumped last_inventory_sync, masking config drift where
+		every item had tracking disabled or variants were mass-deleted.
+		"""
+		mock_session.temp = _noop_session
+		# Force both items to go through backfill with tracked=False
+		frappe.db.sql(
+			"""
+			UPDATE `tabItem Shopify Store`
+			SET shopify_inventory_item_id = ''
+			WHERE parent IN (%s, %s) AND shopify_store = %s
+			""",
+			(self.item_a.name, self.item_b.name, self.store.name),
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			mock_fetch.return_value = {
+				"200": {"inventory_item_id": "9999", "tracked": False},
+				"201": {"inventory_item_id": "8888", "tracked": False},
+			}
+			mock_set.return_value = BatchResult(succeeded=[], failed=[], throttle=ThrottleStatus())
+
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_store_inventory
+
+			sync_store_inventory(self.store.name)
+
+			# set_inventory_batch should NOT be called (nothing to sync)
+			mock_set.assert_not_called()
+
+			# Summary log must be Warning, not Success
+			warning_logs = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"method": "sync_store_inventory",
+					"reference_name": self.store.name,
+					"status": "Warning",
+				},
+				order_by="creation desc",
+				limit=1,
+			)
+			self.assertTrue(warning_logs, "Zero-progress run should log as Warning")
+
+			# last_inventory_sync must NOT be updated on a zero-progress run
+			last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+			self.assertIsNone(last_sync, "Zero-progress run must not bump last_inventory_sync")
+		finally:
+			# Restore cache for other tests
+			frappe.db.sql(
+				"""
+				UPDATE `tabItem Shopify Store`
+				SET shopify_inventory_item_id = CASE parent
+					WHEN %s THEN '1001'
+					WHEN %s THEN '1002'
+				END
+				WHERE parent IN (%s, %s) AND shopify_store = %s
+				""",
+				(
+					self.item_a.name,
+					self.item_b.name,
+					self.item_a.name,
+					self.item_b.name,
+					self.store.name,
+				),
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
 	def test_partial_batch_failure_logs_errors_warning_status(self, mock_set, mock_session):
 		mock_session.temp = _noop_session
@@ -578,6 +652,65 @@ class TestExecuteBatchWithRetry(FrappeTestCase):
 			[call.args[0] for call in mock_sleep.call_args_list],
 			[2.0, 4.0],
 		)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.time.sleep")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_429_without_retry_after_falls_back_to_backoff(self, mock_set, mock_sleep):
+		"""A 429 with no Retry-After header must still retry (using backoff schedule).
+
+		Regression: previously the wrapper required `e.retry_after` to be
+		truthy before sleeping, so a 429 without the optional header would
+		raise on the first attempt and kill 250 items per batch.
+		"""
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _execute_batch_with_retry
+
+		rate_limit_no_header = ShopifyGraphQLError(
+			"rate limited, no Retry-After header", http_status=429, retry_after=None
+		)
+		success = BatchResult(succeeded=["ITEM-A"], failed=[], throttle=ThrottleStatus())
+		mock_set.side_effect = [rate_limit_no_header, rate_limit_no_header, success]
+
+		result = _execute_batch_with_retry(
+			chunk=self._make_chunk(),
+			store_name="test.myshopify.com",
+			timestamp_iso="2026-04-10T10:00:00",
+			logger=frappe.logger("test"),
+		)
+
+		self.assertEqual(result.succeeded, ["ITEM-A"])
+		self.assertEqual(mock_set.call_count, 3)
+		# Fall back to exponential backoff when Retry-After is absent
+		self.assertEqual(
+			[call.args[0] for call in mock_sleep.call_args_list],
+			[2.0, 4.0],
+		)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.time.sleep")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_schema_error_is_non_retryable(self, mock_set, mock_sleep):
+		"""Top-level GraphQL errors (http_status=-1) must not be retried.
+
+		Regression: previously top-level errors were raised with
+		http_status=None, which the wrapper treated as a network error and
+		retried with 2s + 4s backoff. Schema regressions should fail fast,
+		not waste 6 seconds per batch and log as 'network error'.
+		"""
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _execute_batch_with_retry
+
+		schema_err = ShopifyGraphQLError("GraphQL errors: [{'message': 'Field X not found'}]", http_status=-1)
+		mock_set.side_effect = schema_err
+
+		with self.assertRaises(ShopifyGraphQLError):
+			_execute_batch_with_retry(
+				chunk=self._make_chunk(),
+				store_name="test.myshopify.com",
+				timestamp_iso="2026-04-10T10:00:00",
+				logger=frappe.logger("test"),
+			)
+
+		# Should raise immediately on first attempt, no retries, no sleeps
+		self.assertEqual(mock_set.call_count, 1)
+		mock_sleep.assert_not_called()
 
 
 class TestSyncSingleItemInventory(FrappeTestCase):

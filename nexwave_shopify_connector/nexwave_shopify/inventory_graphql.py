@@ -167,11 +167,15 @@ def execute_graphql(query: str, variables: dict[str, Any]) -> dict:
 					break
 		raise ShopifyGraphQLError(str(e), http_status=status, retry_after=retry_after) from e
 
-	# Check for top-level errors array (schema/auth failures)
+	# Check for top-level errors array (schema/auth failures).
+	# These are deterministic failures (bad query, missing field, expired
+	# token, etc.) that won't recover on retry. We use http_status=-1 as a
+	# sentinel so the retry wrapper can distinguish them from network errors
+	# (http_status=None) and 5xx responses.
 	if isinstance(result, dict) and result.get("errors"):
 		raise ShopifyGraphQLError(
 			f"GraphQL errors: {result['errors']}",
-			http_status=None,
+			http_status=-1,
 			body=json.dumps(result),
 		)
 	return result
