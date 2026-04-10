@@ -704,6 +704,11 @@ def _fetch_products_and_map_by_sku_job(store_name: str, initiating_user: str | N
 								product_id=str(product.id),
 								variant_id=str(variant.id),
 								sku=sku,
+								inventory_item_id=(
+									str(variant.inventory_item_id)
+									if getattr(variant, "inventory_item_id", None)
+									else None
+								),
 							)
 							if action == "updated":
 								updated += 1
@@ -811,6 +816,7 @@ def _upsert_item_store_mapping(
 	product_id: str,
 	variant_id: str,
 	sku: str,
+	inventory_item_id: str | None = None,
 ) -> str:
 	"""Create or update an Item Shopify Store mapping row for a specific variant.
 
@@ -829,6 +835,10 @@ def _upsert_item_store_mapping(
 		"shopify_variant_id": variant_id,
 		"shopify_sku": sku,
 	}
+	# Cache inventory_item_id so the GraphQL inventory sync can skip the REST
+	# variant lookup on the next run. Only set when we actually have it.
+	if inventory_item_id:
+		update_data["shopify_inventory_item_id"] = inventory_item_id
 
 	# Single pass: find exact match or blank stub
 	exact_row = None
