@@ -233,6 +233,28 @@ class TestSetInventoryBatch(FrappeTestCase):
 		self.assertEqual(result.succeeded, [])
 		self.assertEqual(len(result.failed), 1)
 
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_exceeding_batch_size_raises_value_error(self, mock_exec):
+		"""A caller that forgets to chunk must fail fast, not round-trip an
+		oversize payload to Shopify."""
+		from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
+			INVENTORY_BATCH_SIZE,
+		)
+
+		quantities = [
+			{
+				"item_code": f"ITEM-{i}",
+				"inventory_item_id": str(1000 + i),
+				"location_id": "loc1",
+				"qty": 5,
+			}
+			for i in range(INVENTORY_BATCH_SIZE + 1)
+		]
+		with self.assertRaises(ValueError) as ctx:
+			set_inventory_batch(quantities, "test.myshopify.com", "2026-04-10T10:00:00")
+		self.assertIn(str(INVENTORY_BATCH_SIZE), str(ctx.exception))
+		mock_exec.assert_not_called()
+
 
 class TestFetchInventoryItemIds(FrappeTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
@@ -272,6 +294,19 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 		result = fetch_inventory_item_ids(["2001", "2002"])
 		self.assertNotIn("2001", result)
 		self.assertIn("2002", result)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_exceeding_nodes_batch_raises_value_error(self, mock_exec):
+		"""Same 250-item limit applies to the nodes lookup query."""
+		from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
+			NODES_BATCH_SIZE,
+		)
+
+		variant_ids = [str(i) for i in range(NODES_BATCH_SIZE + 1)]
+		with self.assertRaises(ValueError) as ctx:
+			fetch_inventory_item_ids(variant_ids)
+		self.assertIn(str(NODES_BATCH_SIZE), str(ctx.exception))
+		mock_exec.assert_not_called()
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
 	def test_not_tracked_still_returned_with_flag(self, mock_exec):

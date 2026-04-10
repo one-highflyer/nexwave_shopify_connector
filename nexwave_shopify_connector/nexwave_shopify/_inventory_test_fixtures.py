@@ -114,7 +114,12 @@ def ensure_test_shopify_store(**overrides) -> "frappe.model.document.Document":
 
 
 def ensure_test_item(item_code: str, **overrides) -> "frappe.model.document.Document":
-	"""Create an Item with sensible defaults. Idempotent.
+	"""Create (or update) an Item with sensible defaults. Idempotent.
+
+	If the item already exists, caller-provided overrides are applied and
+	saved instead of being silently ignored. This preserves the contract
+	that callers can always rely on the returned doc reflecting their
+	requested field values.
 
 	Uses ``flags.ignore_validate`` + ``ignore_mandatory`` so third-party apps
 	hooking ``Item.validate`` (e.g., a site that has webshop + an unrelated
@@ -128,7 +133,14 @@ def ensure_test_item(item_code: str, **overrides) -> "frappe.model.document.Docu
 		The Item document.
 	"""
 	if frappe.db.exists("Item", item_code):
-		return frappe.get_doc("Item", item_code)
+		doc = frappe.get_doc("Item", item_code)
+		if overrides:
+			for key, value in overrides.items():
+				setattr(doc, key, value)
+			doc.flags.ignore_validate = True
+			doc.flags.ignore_mandatory = True
+			doc.save(ignore_permissions=True)
+		return doc
 
 	doc = frappe.get_doc(
 		{
