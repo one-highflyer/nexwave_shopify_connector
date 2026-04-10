@@ -1,3 +1,16 @@
+## [1.11.14](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.13...v1.11.14) (2026-04-10)
+
+
+### Bug Fixes
+
+* **inventory:** address review findings for GraphQL sync ([2c0d2ca](https://github.com/one-highflyer/nexwave_shopify_connector/commit/2c0d2caa48349947484bbb1585f1b83173f0e55d))
+* **inventory:** address second-round review findings ([f494d72](https://github.com/one-highflyer/nexwave_shopify_connector/commit/f494d72da6b3a2282f510823f447d276aecb07c4))
+* **inventory:** apply override merge and add batch-size guards ([0c14ebb](https://github.com/one-highflyer/nexwave_shopify_connector/commit/0c14ebb97bef21d3267b2ab8e17a2e373c01bdac))
+* **inventory:** batch inventory sync via GraphQL and cache inventory_item_id ([83eb19b](https://github.com/one-highflyer/nexwave_shopify_connector/commit/83eb19bedfc5f4a97e545b4f82ed832a59bd9614))
+* **inventory:** ensure_item_shopify_store_row always sets cache field ([a5f63eb](https://github.com/one-highflyer/nexwave_shopify_connector/commit/a5f63ebe18e38ac6f8086693303827f9ef0cc9f7))
+* **inventory:** harden retry, error classification, and zero-progress reporting ([dbc3ef2](https://github.com/one-highflyer/nexwave_shopify_connector/commit/dbc3ef2b4e7da673c143632407546cabe21e0d80))
+* **inventory:** use InventoryItem.tracked and report backfill errors ([5cf1883](https://github.com/one-highflyer/nexwave_shopify_connector/commit/5cf18838c2dacaf49e07a3306d24a9123b82c5aa))
+
 ## [1.11.13](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.12...v1.11.13) (2026-04-09)
 
 
