@@ -1,18 +1,28 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
+import math
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
 from frappe.utils import add_to_date, now_datetime
 from pyactiveresource.connection import ClientError
 from shopify.api_version import ApiVersion
-from shopify.resources import InventoryLevel, Variant
 from shopify.session import Session
 
 from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
+from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
+	INVENTORY_BATCH_SIZE,
+	NODES_BATCH_SIZE,
+	THROTTLE_MIN_AVAILABLE,
+	BatchResult,
+	ShopifyGraphQLError,
+	ThrottleStatus,
+	fetch_inventory_item_ids,
+	set_inventory_batch,
+)
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 from nexwave_shopify_connector.utils.logger import get_logger
 
@@ -24,7 +34,7 @@ def update_inventory_on_shopify():
 	"""
 	Scheduler job - sync inventory for all enabled stores.
 
-	Runs every 5 minutes (configured in hooks.py) but checks each store's
+	Runs every 10 minutes (configured in hooks.py) but checks each store's
 	inventory_sync_frequency to determine if it's time to sync.
 	"""
 	# Get all stores with inventory sync enabled
@@ -42,6 +52,8 @@ def update_inventory_on_shopify():
 			"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
 			queue="long",
 			timeout=10800,  # 3 hour timeout for large inventories
+			job_id=f"inventory_sync_{store_name}",
+			deduplicate=True,
 			store_name=store_name,
 		)
 
@@ -59,7 +71,7 @@ def _should_sync_inventory(store) -> bool:
 	if not store.last_inventory_sync:
 		return True
 
-	frequency_minutes = store.inventory_sync_frequency or 30
+	frequency_minutes = store.inventory_sync_frequency or 60
 	next_sync_time = add_to_date(store.last_inventory_sync, minutes=frequency_minutes)
 
 	return now_datetime() >= next_sync_time
@@ -99,6 +111,13 @@ def sync_store_inventory(store_name: str):
 		)
 		return
 
+	# Bench config bailout: allows operators to disable GraphQL inventory sync per-store
+	# without touching doctype settings (e.g., during a production incident).
+	skip_stores = frappe.conf.get("nexwave_shopify_disable_graphql_inventory_sync") or []
+	if store_name in skip_stores:
+		logger.warning("Inventory sync disabled via bench config for %s", store_name)
+		return
+
 	# Initialize API versions
 	_init_shopify_api_versions()
 
@@ -122,114 +141,121 @@ def sync_store_inventory(store_name: str):
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 		return
 
-	sync_count = 0
-	skip_count = 0
-	error_count = 0
+	# Build location mapping from warehouse_mapping
+	location_mapping: list[tuple[str, str]] = [
+		(m.shopify_location_id, m.erpnext_warehouse)
+		for m in store.warehouse_mapping
+		if m.shopify_location_id and m.erpnext_warehouse
+	]
+	if not location_mapping:
+		logger.error("No valid location mappings for inventory sync for Shopify store: %s", store_name)
+		frappe.log_error(
+			title=f"Shopify Inventory Sync - {store_name}",
+			message="No valid location mappings (location_id + warehouse) configured",
+		)
+		return
+
+	t0 = time.monotonic()
+	timestamp_iso = now_datetime().isoformat()
+	total_sync = 0
+	total_skip = 0
+	total_error = 0
+
+	# Bulk read Bin quantities for all (item, warehouse) pairs in one shot
+	pairs = [(item["item_code"], wh) for item in items_to_sync for (_loc, wh) in location_mapping]
+	qty_by_pair = _bulk_get_stock_qty(pairs)
 
 	try:
 		with Session.temp(store.shop_domain, api_version, access_token):
-			logger.info(
-				"Syncing inventory for %s items for Shopify store: %s", len(items_to_sync), store_name
-			)
-			for item_data in items_to_sync:
-				try:
-					synced = _sync_item_inventory(item_data, store)
-					if synced:
-						sync_count += 1
-					else:
-						skip_count += 1
-				except Exception as e:
-					if isinstance(e, ClientError) and e.code == 429:
-						retry_after = _get_retry_after(e)
-						logger.warning(
-							"Rate limited, retrying after %s seconds for %s",
-							retry_after,
-							item_data["item_code"],
+			# Lazy backfill: fill shopify_inventory_item_id on rows that are empty.
+			items_to_sync, skipped_backfill = _resolve_inventory_item_ids(store_name, items_to_sync, logger)
+			total_skip += len(skipped_backfill)
+
+			# Iterate locations; for each build a list of quantity entries and
+			# chunk into INVENTORY_BATCH_SIZE mutations.
+			for location_id, warehouse in location_mapping:
+				qty_entries = _build_quantities_for_location(
+					location_id, warehouse, items_to_sync, qty_by_pair
+				)
+				if not qty_entries:
+					continue
+
+				num_batches = max(1, math.ceil(len(qty_entries) / INVENTORY_BATCH_SIZE))
+				for i, chunk in enumerate(_chunked(qty_entries, INVENTORY_BATCH_SIZE), start=1):
+					batch_t0 = time.monotonic()
+					try:
+						result = _execute_batch_with_retry(
+							chunk=chunk,
+							store_name=store_name,
+							timestamp_iso=timestamp_iso,
+							logger=logger,
 						)
-						time.sleep(retry_after)
-						try:
-							synced = _sync_item_inventory(item_data, store)
-							if synced:
-								sync_count += 1
-							else:
-								skip_count += 1
-						except Exception as retry_e:
-							logger.error(
-								"Retry failed for %s: %s",
-								item_data["item_code"],
-								str(retry_e),
-								exc_info=True,
-							)
-							error_count += 1
+					except ShopifyGraphQLError as e:
+						# Whole batch failed after retries
+						total_error += len(chunk)
+						for q in chunk:
 							create_shopify_log(
 								status="Error",
-								method="sync_item_inventory",
+								method="sync_store_inventory",
 								shopify_store=store_name,
-								message=f"Failed to sync inventory for {item_data['item_code']} (after rate limit retry)",
-								exception=str(retry_e),
+								message=f"Batch failed for {q['item_code']}",
+								exception=str(e),
 								reference_doctype="Item",
-								reference_name=item_data["item_code"],
+								reference_name=q["item_code"],
 								request_data={
-									"item_code": item_data["item_code"],
-									"shopify_variant_id": item_data.get("shopify_variant_id"),
+									"location_id": location_id,
+									"qty": q["qty"],
 								},
 							)
-					else:
-						logger.error(
-							"Failed to sync inventory for %s for Shopify store: %s, error: %s",
-							item_data["item_code"],
-							store_name,
-							str(e),
-							exc_info=True,
-						)
-						error_count += 1
+						continue
+
+					total_sync += len(result.succeeded)
+					total_error += len(result.failed)
+					for item_code, err_msg in result.failed:
 						create_shopify_log(
 							status="Error",
-							method="sync_item_inventory",
+							method="sync_store_inventory",
 							shopify_store=store_name,
-							message=f"Failed to sync inventory for {item_data['item_code']}",
-							exception=str(e),
+							message=f"Shopify userError for {item_code}",
+							exception=err_msg,
 							reference_doctype="Item",
-							reference_name=item_data["item_code"],
-							request_data={
-								"item_code": item_data["item_code"],
-								"shopify_variant_id": item_data.get("shopify_variant_id"),
-							},
+							reference_name=item_code,
 						)
 
-				# Rate limit: Shopify allows 2 calls/sec (leaky bucket 40/2s)
-				time.sleep(1.0)
+					batch_elapsed = time.monotonic() - batch_t0
+					logger.info(
+						"Processed batch %s/%s (%s items) in %.2fs for location %s, %s cost pts remaining",
+						i,
+						num_batches,
+						len(chunk),
+						batch_elapsed,
+						location_id,
+						result.throttle.currently_available,
+					)
+					_throttle_if_needed(result.throttle, logger)
 
-		# Update last sync time
+		# Update last sync time (only on success/warning path)
 		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 
 		# Determine overall status
-		if error_count > 0 and sync_count == 0:
+		if total_error > 0 and total_sync == 0:
 			status = "Error"  # Complete failure
-		elif error_count > 0:
+		elif total_error > 0:
 			status = "Warning"  # Partial success
 		else:
 			status = "Success"  # All items synced
 
-		logger.info(
-			"Inventory sync completed for Shopify store: %s, status: %s, errors: %s",
-			store_name,
-			status,
-			error_count,
+		elapsed = int(time.monotonic() - t0)
+		summary = (
+			f"Sync complete: {total_sync} synced, {total_skip} skipped, " f"{total_error} errors, {elapsed}s"
 		)
-
-		summary_parts = [f"Synced inventory for {sync_count} items"]
-		if skip_count:
-			summary_parts.append(f"{skip_count} skipped (tracking disabled)")
-		if error_count:
-			summary_parts.append(f"{error_count} errors")
-
+		logger.info("%s - store=%s status=%s", summary, store_name, status)
 		create_shopify_log(
 			status=status,
 			method="sync_store_inventory",
 			shopify_store=store_name,
-			message=", ".join(summary_parts),
+			message=summary,
 			reference_doctype="Shopify Store",
 			reference_name=store_name,
 		)
@@ -249,8 +275,257 @@ def sync_store_inventory(store_name: str):
 		)
 
 
+def _execute_batch_with_retry(
+	chunk: list[dict],
+	store_name: str,
+	timestamp_iso: str,
+	logger,
+) -> BatchResult:
+	"""Wrap set_inventory_batch with retry logic.
+
+	- 429: sleep retry_after, retry (up to 2 retries).
+	- 5xx / network (http_status None or 5xx): exponential backoff (2s, 4s),
+	  up to 2 retries.
+	- Other ShopifyGraphQLError: re-raise immediately.
+	"""
+	backoff = [2.0, 4.0]
+	last_error: ShopifyGraphQLError | None = None
+	for attempt in range(3):
+		try:
+			return set_inventory_batch(chunk, store_name, timestamp_iso, logger)
+		except ShopifyGraphQLError as e:
+			last_error = e
+			status = e.http_status
+			if status == 429 and e.retry_after:
+				if attempt < 2:
+					logger.warning("Rate limited, sleeping %.1fs", e.retry_after)
+					time.sleep(e.retry_after)
+					continue
+				raise
+			if status is None or (500 <= (status or 0) < 600):
+				if attempt < 2:
+					logger.warning(
+						"GraphQL error (attempt %s), backing off %ss",
+						attempt + 1,
+						backoff[attempt],
+					)
+					time.sleep(backoff[attempt])
+					continue
+				raise
+			# Non-retryable error (4xx other than 429)
+			raise
+	# Defensive; loop either returns or raises
+	if last_error:
+		raise last_error
+	raise ShopifyGraphQLError("Unknown batch failure")
+
+
+def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], float]:
+	"""Read actual_qty from tabBin for many (item_code, warehouse) pairs in one query.
+
+	Returns a dict keyed by (item_code, warehouse). Missing pairs are absent;
+	callers should default to 0.
+	"""
+	if not pairs:
+		return {}
+
+	# Deduplicate to reduce WHERE clause bloat
+	unique_pairs = list({p for p in pairs})
+	item_codes = list({p[0] for p in unique_pairs})
+	warehouses = list({p[1] for p in unique_pairs})
+
+	if not item_codes or not warehouses:
+		return {}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT item_code, warehouse, actual_qty
+		FROM `tabBin`
+		WHERE item_code IN %(item_codes)s
+		  AND warehouse IN %(warehouses)s
+		""",
+		{"item_codes": tuple(item_codes), "warehouses": tuple(warehouses)},
+		as_dict=True,
+	)
+
+	result: dict[tuple[str, str], float] = {}
+	for row in rows:
+		result[(row["item_code"], row["warehouse"])] = row["actual_qty"] or 0
+	return result
+
+
+def _resolve_inventory_item_ids(store_name: str, items: list[dict], logger) -> tuple[list[dict], list[dict]]:
+	"""Ensure every item has shopify_inventory_item_id. Lazy-backfill via GraphQL nodes query.
+
+	Items already with a cached id are kept as-is. Items without a cached id are
+	looked up in batches. Variants that are missing from Shopify (deleted) or have
+	inventoryManagement != "SHOPIFY" are dropped from the returned list and counted
+	as skipped.
+
+	Returns:
+		(filtered_items, skipped_items)
+	"""
+	has_cache: list[dict] = []
+	needs_lookup: list[dict] = []
+	for item in items:
+		if item.get("shopify_inventory_item_id"):
+			has_cache.append(item)
+		else:
+			needs_lookup.append(item)
+
+	skipped: list[dict] = []
+
+	if not needs_lookup:
+		return has_cache, skipped
+
+	logger.info(
+		"Backfilling inventory_item_id for %s items in store %s",
+		len(needs_lookup),
+		store_name,
+	)
+
+	# Map variant_id -> item dict for fast reassembly
+	by_variant: dict[str, dict] = {}
+	for item in needs_lookup:
+		variant_id = str(item.get("shopify_variant_id") or "")
+		if variant_id:
+			by_variant[variant_id] = item
+
+	variant_ids = list(by_variant.keys())
+	resolved: list[dict] = []
+	for chunk in _chunked(variant_ids, NODES_BATCH_SIZE):
+		try:
+			lookup_result = fetch_inventory_item_ids(chunk, logger=logger)
+		except ShopifyGraphQLError as e:
+			logger.error(
+				"Failed to fetch inventory_item_ids for %s variants in store %s: %s",
+				len(chunk),
+				store_name,
+				e,
+				exc_info=True,
+			)
+			# Mark all in this chunk as skipped; we can't sync inventory without
+			# the inventory_item_id.
+			for vid in chunk:
+				item = by_variant.get(vid)
+				if item:
+					skipped.append({**item, "_skip_reason": f"lookup_failed: {e}"})
+			continue
+
+		for vid in chunk:
+			item = by_variant.get(vid)
+			if not item:
+				continue
+			info = lookup_result.get(vid)
+			if not info:
+				# Variant not found in Shopify (likely deleted)
+				logger.info(
+					"Variant %s (item %s) missing from Shopify; skipping",
+					vid,
+					item.get("item_code"),
+				)
+				skipped.append({**item, "_skip_reason": "variant_not_found"})
+				continue
+			inv_mgmt = (info.get("inventory_management") or "").upper()
+			inv_item_id = info.get("inventory_item_id")
+			if inv_mgmt != "SHOPIFY":
+				logger.info(
+					"Variant %s (item %s) inventoryManagement=%s; skipping",
+					vid,
+					item.get("item_code"),
+					inv_mgmt or "(none)",
+				)
+				skipped.append({**item, "_skip_reason": f"not_managed:{inv_mgmt}"})
+				continue
+			if not inv_item_id:
+				logger.info(
+					"Variant %s (item %s) has no inventoryItem; skipping",
+					vid,
+					item.get("item_code"),
+				)
+				skipped.append({**item, "_skip_reason": "no_inventory_item"})
+				continue
+
+			# Cache the inventory_item_id back to the DB for next time
+			_cache_inventory_item_id(item["item_code"], store_name, str(inv_item_id))
+
+			enriched = dict(item)
+			enriched["shopify_inventory_item_id"] = str(inv_item_id)
+			resolved.append(enriched)
+
+	return has_cache + resolved, skipped
+
+
+def _cache_inventory_item_id(item_code: str, store_name: str, inventory_item_id: str) -> None:
+	"""Persist a resolved inventory_item_id back to the Item Shopify Store row."""
+	frappe.db.sql(
+		# nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- UPDATE, no commit
+		"""
+		UPDATE `tabItem Shopify Store`
+		SET shopify_inventory_item_id = %(inv_id)s
+		WHERE parent = %(item_code)s
+		  AND shopify_store = %(store_name)s
+		""",
+		{
+			"inv_id": inventory_item_id,
+			"item_code": item_code,
+			"store_name": store_name,
+		},
+	)
+
+
+def _build_quantities_for_location(
+	location_id: str,
+	warehouse: str,
+	items: list[dict],
+	qty_by_pair: dict[tuple[str, str], float],
+) -> list[dict]:
+	"""Build a list of quantity change dicts for one Shopify location."""
+	result: list[dict] = []
+	for item in items:
+		inv_item_id = item.get("shopify_inventory_item_id")
+		if not inv_item_id:
+			continue
+		raw_qty = qty_by_pair.get((item["item_code"], warehouse), 0) or 0
+		# Clamp negative to 0 (Shopify doesn't accept negative)
+		qty = max(int(raw_qty), 0)
+		result.append(
+			{
+				"item_code": item["item_code"],
+				"inventory_item_id": inv_item_id,
+				"location_id": location_id,
+				"qty": qty,
+			}
+		)
+	return result
+
+
+def _throttle_if_needed(throttle: ThrottleStatus, logger) -> None:
+	"""Sleep if throttle.currently_available < THROTTLE_MIN_AVAILABLE."""
+	if throttle.currently_available >= THROTTLE_MIN_AVAILABLE:
+		return
+	deficit = THROTTLE_MIN_AVAILABLE - throttle.currently_available
+	restore_rate = max(throttle.restore_rate, 1.0)
+	pause = max(0.5, min(deficit / restore_rate, 10.0))
+	logger.info(
+		"Throttling: %s points available (min %s), sleeping %.2fs",
+		throttle.currently_available,
+		THROTTLE_MIN_AVAILABLE,
+		pause,
+	)
+	time.sleep(pause)
+
+
+def _chunked(seq, size):
+	for i in range(0, len(seq), size):
+		yield seq[i : i + size]
+
+
 def _get_retry_after(e: ClientError) -> float:
-	"""Extract Retry-After seconds from a 429 response, defaulting to 2.0."""
+	"""Extract Retry-After seconds from a 429 response, defaulting to 2.0.
+
+	Kept for backward compatibility with code outside inventory.py.
+	"""
 	logger = get_logger()
 	headers = getattr(e.response, "headers", {})
 	# Case-insensitive lookup since headers are stored in a plain dict
@@ -278,14 +553,16 @@ def get_items_with_shopify_ids(store_name: str) -> list[dict]:
 		store_name: Shopify Store name
 
 	Returns:
-		List of dicts with item_code, shopify_variant_id
+		List of dicts with item_code, shopify_product_id, shopify_variant_id,
+		shopify_inventory_item_id
 	"""
 	return frappe.db.sql(
 		"""
 		SELECT
 			iss.parent as item_code,
 			iss.shopify_product_id,
-			iss.shopify_variant_id
+			iss.shopify_variant_id,
+			iss.shopify_inventory_item_id
 		FROM `tabItem Shopify Store` iss
 		JOIN `tabItem` item ON item.name = iss.parent
 		WHERE
@@ -298,56 +575,6 @@ def get_items_with_shopify_ids(store_name: str) -> list[dict]:
 		(store_name,),
 		as_dict=True,
 	)
-
-
-def _sync_item_inventory(item_data: dict, store) -> bool:
-	"""
-	Sync inventory for a single item to all mapped Shopify locations.
-
-	Args:
-		item_data: Dict with item_code, shopify_variant_id
-		store: Shopify Store document
-
-	Returns:
-		True if inventory was synced, False if the item was skipped
-	"""
-	item_code = item_data["item_code"]
-	variant_id = item_data["shopify_variant_id"]
-	product_id = item_data["shopify_product_id"]
-
-	logger = get_logger()
-
-	# Get inventory_item_id from variant
-	variant = Variant.find(variant_id, product_id=product_id)
-	if not variant or not variant.inventory_item_id:
-		raise Exception(f"Could not get inventory_item_id for variant {variant_id}")
-
-	# Skip items that don't have inventory tracking enabled on Shopify
-	if variant.inventory_management != "shopify":
-		logger.warning(
-			"Skipping inventory sync for %s — inventory tracking not enabled on Shopify (variant %s)",
-			item_code,
-			variant_id,
-		)
-		return False
-
-	inventory_item_id = variant.inventory_item_id
-
-	# Sync to each mapped location
-	for mapping in store.warehouse_mapping:
-		location_id = mapping.shopify_location_id
-		warehouse = mapping.erpnext_warehouse
-
-		if not location_id or not warehouse:
-			continue
-
-		# Get stock qty from ERPNext
-		qty = get_stock_qty(item_code, warehouse)
-
-		# Update Shopify inventory level
-		_set_inventory_level(location_id, inventory_item_id, qty)
-
-	return True
 
 
 def get_stock_qty(item_code: str, warehouse: str) -> float:
@@ -365,22 +592,6 @@ def get_stock_qty(item_code: str, warehouse: str) -> float:
 	return qty or 0
 
 
-def _set_inventory_level(location_id: str, inventory_item_id: str, qty: float):
-	"""
-	Set inventory level in Shopify for a specific location.
-
-	Args:
-		location_id: Shopify location ID
-		inventory_item_id: Shopify inventory item ID
-		qty: Quantity to set
-	"""
-	# Shopify requires integer quantities
-	qty = int(qty)
-
-	# Use the set endpoint to set absolute quantity
-	InventoryLevel.set(location_id=location_id, inventory_item_id=inventory_item_id, available=qty)
-
-
 def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 	"""
 	Sync inventory for a single item to one or all stores.
@@ -391,6 +602,7 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 		item_code: ERPNext Item code
 		store_name: Optional specific store (syncs to all eligible stores if not provided)
 	"""
+	logger = get_logger()
 	item = frappe.get_doc("Item", item_code)
 
 	if item.disabled:
@@ -400,7 +612,6 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 	if store_name:
 		stores = [frappe.get_doc("Shopify Store", store_name)]
 	else:
-		# Get all stores this item is linked to
 		store_names = frappe.get_all(
 			"Item Shopify Store",
 			filters={"parent": item_code, "enabled": 1, "shopify_variant_id": ["is", "set"]},
@@ -411,17 +622,22 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 	for store in stores:
 		if not store.enabled or not store.enable_inventory_sync:
 			continue
+		if not store.warehouse_mapping:
+			logger.info(
+				"Skipping single-item sync for %s -> %s (no warehouse mapping)",
+				item_code,
+				store.name,
+			)
+			continue
 
-		# Initialize API versions
 		_init_shopify_api_versions()
 
 		api_version = store.api_version or DEFAULT_API_VERSION
 		access_token = store.get_password("access_token")
-
 		if not access_token:
 			continue
 
-		# Get Item Shopify Store row
+		# Locate the mapping row for this store
 		store_row = None
 		for row in item.shopify_stores:
 			if row.shopify_store == store.name:
@@ -431,16 +647,94 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 		if not store_row or not store_row.shopify_variant_id:
 			continue
 
+		# Build a single-item payload and reuse the batched helpers.
+		items_payload = [
+			{
+				"item_code": item_code,
+				"shopify_product_id": store_row.shopify_product_id,
+				"shopify_variant_id": store_row.shopify_variant_id,
+				"shopify_inventory_item_id": store_row.get("shopify_inventory_item_id"),
+			}
+		]
+
+		location_mapping = [
+			(m.shopify_location_id, m.erpnext_warehouse)
+			for m in store.warehouse_mapping
+			if m.shopify_location_id and m.erpnext_warehouse
+		]
+		if not location_mapping:
+			continue
+
+		pairs = [(item_code, wh) for (_loc, wh) in location_mapping]
+		qty_by_pair = _bulk_get_stock_qty(pairs)
+
+		timestamp_iso = now_datetime().isoformat()
+
 		try:
 			with Session.temp(store.shop_domain, api_version, access_token):
-				item_data = {
-					"item_code": item_code,
-					"shopify_variant_id": store_row.shopify_variant_id,
-					"shopify_product_id": store_row.shopify_product_id,
-				}
-				_sync_item_inventory(item_data, store)
+				items_payload, skipped = _resolve_inventory_item_ids(store.name, items_payload, logger)
+				if not items_payload:
+					logger.info(
+						"Single-item sync skipped for %s -> %s (reasons=%s)",
+						item_code,
+						store.name,
+						[s.get("_skip_reason") for s in skipped],
+					)
+					continue
+
+				for location_id, warehouse in location_mapping:
+					qty_entries = _build_quantities_for_location(
+						location_id, warehouse, items_payload, qty_by_pair
+					)
+					if not qty_entries:
+						continue
+					try:
+						result = _execute_batch_with_retry(
+							chunk=qty_entries,
+							store_name=store.name,
+							timestamp_iso=timestamp_iso,
+							logger=logger,
+						)
+					except ShopifyGraphQLError as e:
+						logger.error(
+							"Single-item sync failed for %s -> %s at location %s: %s",
+							item_code,
+							store.name,
+							location_id,
+							e,
+							exc_info=True,
+						)
+						create_shopify_log(
+							status="Error",
+							method="sync_single_item_inventory",
+							shopify_store=store.name,
+							message=f"Single-item sync failed for {item_code}",
+							exception=str(e),
+							reference_doctype="Item",
+							reference_name=item_code,
+						)
+						continue
+
+					for item_code_, err_msg in result.failed:
+						create_shopify_log(
+							status="Error",
+							method="sync_single_item_inventory",
+							shopify_store=store.name,
+							message=f"Shopify userError for {item_code_}",
+							exception=err_msg,
+							reference_doctype="Item",
+							reference_name=item_code_,
+						)
+					_throttle_if_needed(result.throttle, logger)
 
 		except Exception as e:
+			logger.error(
+				"Single-item sync error for %s -> %s: %s",
+				item_code,
+				store.name,
+				str(e),
+				exc_info=True,
+			)
 			frappe.log_error(
 				title=f"Shopify Inventory Sync Error - {store.name}",
 				message=f"Failed to sync inventory for {item_code}: {e!s}",

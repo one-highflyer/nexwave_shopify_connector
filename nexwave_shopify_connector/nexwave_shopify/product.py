@@ -453,10 +453,15 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 	logger = get_logger()
 	store_row = get_item_shopify_store_row(item, store)
 
-	# Get first variant ID
+	# Get first variant ID and cached inventory_item_id
 	variant_id = None
+	inventory_item_id = None
 	if product.variants:
-		variant_id = str(product.variants[0].id)
+		first_variant = product.variants[0]
+		variant_id = str(first_variant.id)
+		inv_item_id = getattr(first_variant, "inventory_item_id", None)
+		if inv_item_id:
+			inventory_item_id = str(inv_item_id)
 
 	update_data = {
 		"shopify_product_id": str(product.id),
@@ -464,6 +469,12 @@ def _update_item_shopify_store_row(item, store, product, sync_hash: str, image_h
 		"last_sync_at": now_datetime(),
 		"last_sync_hash": sync_hash,
 	}
+
+	# Cache inventory_item_id so the GraphQL inventory sync can skip the REST
+	# variant lookup. Only overwrite when we actually received a value from
+	# Shopify, so we don't wipe an existing cached id.
+	if inventory_item_id:
+		update_data["shopify_inventory_item_id"] = inventory_item_id
 
 	# Only update image hash if provided
 	if image_hash is not None:

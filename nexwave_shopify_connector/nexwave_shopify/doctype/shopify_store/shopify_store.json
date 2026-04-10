@@ -355,8 +355,8 @@
    "options": "Warehouse"
   },
   {
-   "default": "30",
-   "description": "Sync interval in minutes",
+   "default": "60",
+   "description": "Sync interval in minutes (default 60). Inventory is batched via GraphQL (250 items per call), so most stores complete in well under a minute even with thousands of items.",
    "fieldname": "inventory_sync_frequency",
    "fieldtype": "Int",
    "label": "Inventory Sync Frequency"
@@ -537,7 +537,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-02-05 12:00:00.000000",
+ "modified": "2026-04-10 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

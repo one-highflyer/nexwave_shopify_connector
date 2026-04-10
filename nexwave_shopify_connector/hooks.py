@@ -75,7 +75,7 @@ doc_events = {
 
 scheduler_events = {
 	"cron": {
-		"*/5 * * * *": ["nexwave_shopify_connector.nexwave_shopify.inventory.update_inventory_on_shopify"],
+		"*/10 * * * *": ["nexwave_shopify_connector.nexwave_shopify.inventory.update_inventory_on_shopify"],
 	},
 }
 
