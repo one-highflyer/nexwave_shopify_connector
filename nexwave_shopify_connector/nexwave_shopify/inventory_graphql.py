@@ -231,6 +231,19 @@ def set_inventory_batch(
 	if not quantities:
 		return BatchResult()
 
+	# Shopify's inventorySetQuantities mutation accepts at most INVENTORY_BATCH_SIZE
+	# items per call. Callers are expected to chunk via _chunked() before
+	# invoking this function; enforce the contract explicitly so a future
+	# caller that forgets to chunk fails fast with a clear message instead of
+	# round-tripping an oversize payload to Shopify.
+	if len(quantities) > INVENTORY_BATCH_SIZE:
+		raise ValueError(
+			f"set_inventory_batch received {len(quantities)} quantities, "
+			f"exceeds Shopify's {INVENTORY_BATCH_SIZE}-item limit "
+			f"(store={store_name}, timestamp={timestamp_iso}). "
+			f"Chunk the input via _chunked() before calling."
+		)
+
 	graphql_quantities = [
 		{
 			"inventoryItemId": f"gid://shopify/InventoryItem/{q['inventory_item_id']}",
@@ -340,6 +353,17 @@ def fetch_inventory_item_ids(
 	"""
 	if not variant_ids:
 		return {}
+
+	# Shopify's `nodes` query accepts at most NODES_BATCH_SIZE ids per call.
+	# Callers in _resolve_inventory_item_ids chunk via _chunked() before
+	# invoking this function; enforce the contract explicitly for future
+	# callers.
+	if len(variant_ids) > NODES_BATCH_SIZE:
+		raise ValueError(
+			f"fetch_inventory_item_ids received {len(variant_ids)} variant ids, "
+			f"exceeds Shopify's {NODES_BATCH_SIZE}-item limit. "
+			f"Chunk the input via _chunked() before calling."
+		)
 
 	gids = [f"gid://shopify/ProductVariant/{vid}" for vid in variant_ids]
 	response = execute_graphql(VARIANT_NODES_QUERY, {"ids": gids})
