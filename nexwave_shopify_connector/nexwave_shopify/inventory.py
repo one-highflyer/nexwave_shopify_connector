@@ -256,18 +256,25 @@ def sync_store_inventory(store_name: str, force: bool = False):
 					)
 					_throttle_if_needed(result.throttle, logger)
 
-		# Only update last_inventory_sync when the run made at least some
-		# progress OR had no errors. If every batch failed (bad token,
-		# malformed payload, all retries exhausted), bumping the timestamp
-		# would cause the scheduler to silently skip retries for the next
-		# inventory_sync_frequency interval.
-		if total_error == 0 or total_sync > 0:
+		# Only update last_inventory_sync when the run made actual progress
+		# (at least one item synced successfully). Zero-progress runs are
+		# either errors (bad token, schema failure) or config drift (every
+		# item has tracking disabled, variants deleted). In both cases we
+		# want the scheduler to retry next cycle rather than silently skip
+		# for the inventory_sync_frequency window.
+		if total_sync > 0:
 			frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
 			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 
 		# Determine overall status
 		if total_error > 0 and total_sync == 0:
 			status = "Error"  # Complete failure
+		elif total_sync == 0 and total_skip > 0:
+			# Zero-progress run: no errors but nothing was actually pushed.
+			# Could be a legitimate state (all items untracked) or config
+			# drift (e.g., mass variant deletion). Surface as Warning so
+			# operators investigate rather than assume success.
+			status = "Warning"
 		elif total_error > 0:
 			status = "Warning"  # Partial success
 		else:
@@ -310,10 +317,14 @@ def _execute_batch_with_retry(
 ) -> BatchResult:
 	"""Wrap set_inventory_batch with retry logic.
 
-	- 429: sleep retry_after, retry (up to 2 retries).
-	- 5xx / network (http_status None or 5xx): exponential backoff (2s, 4s),
+	- 429: sleep retry_after if provided, else fall back to exponential
+	  backoff (2s, 4s). Retry up to 2 times (3 total attempts).
+	- Network / transport (http_status is None): exponential backoff (2s, 4s),
 	  up to 2 retries.
-	- Other ShopifyGraphQLError: re-raise immediately.
+	- 5xx: exponential backoff (2s, 4s), up to 2 retries.
+	- Top-level GraphQL errors (http_status == -1): non-retryable, raise
+	  immediately. These are schema/auth failures that won't recover on retry.
+	- Other ShopifyGraphQLError (4xx other than 429): re-raise immediately.
 	"""
 	backoff = [2.0, 4.0]
 	last_error: ShopifyGraphQLError | None = None
@@ -323,10 +334,23 @@ def _execute_batch_with_retry(
 		except ShopifyGraphQLError as e:
 			last_error = e
 			status = e.http_status
-			if status == 429 and e.retry_after:
+			# Top-level GraphQL error (schema/auth): never retry. These are
+			# deterministic failures; retrying wastes time and muddies logs
+			# with spurious "network error" messages.
+			if status == -1:
+				raise
+			if status == 429:
 				if attempt < 2:
-					logger.warning("Rate limited, sleeping %.1fs", e.retry_after)
-					time.sleep(e.retry_after)
+					# Fall back to exponential backoff if Shopify did not
+					# supply a Retry-After header (the header is optional
+					# per HTTP spec and Shopify sometimes omits it).
+					sleep_for = e.retry_after if e.retry_after else backoff[attempt]
+					logger.warning(
+						"Rate limited, sleeping %.1fs (attempt %s)",
+						sleep_for,
+						attempt + 1,
+					)
+					time.sleep(sleep_for)
 					continue
 				raise
 			if status is None or (500 <= (status or 0) < 600):
@@ -658,9 +682,24 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 		)
 		stores = [frappe.get_doc("Shopify Store", name) for name in store_names]
 
+	# Bench config bailout: same kill-switch honoured by the bulk sync path.
+	# Without this, stock entries would keep syncing to a "disabled" store.
+	skip_stores = frappe.conf.get("nexwave_shopify_disable_graphql_inventory_sync") or []
+
 	for store in stores:
 		if not store.enabled or not store.enable_inventory_sync:
+			# Intentionally silent: disabled stores are an expected state,
+			# not an error. No log needed.
 			continue
+
+		if store.name in skip_stores:
+			logger.warning(
+				"Single-item inventory sync disabled via bench config for %s (item %s)",
+				store.name,
+				item_code,
+			)
+			continue
+
 		if not store.warehouse_mapping:
 			logger.info(
 				"Skipping single-item sync for %s -> %s (no warehouse mapping)",
@@ -674,6 +713,21 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 		api_version = store.api_version or DEFAULT_API_VERSION
 		access_token = store.get_password("access_token")
 		if not access_token:
+			# Token rotation or misconfiguration: loud error, not silent.
+			# If this silently drops, ERPNext and Shopify drift indefinitely.
+			logger.error(
+				"Access token missing for Shopify Store %s; single-item sync for %s cannot proceed",
+				store.name,
+				item_code,
+			)
+			create_shopify_log(
+				status="Error",
+				method="sync_single_item_inventory",
+				shopify_store=store.name,
+				message=f"Access token missing for {store.name}; cannot sync {item_code}",
+				reference_doctype="Item",
+				reference_name=item_code,
+			)
 			continue
 
 		# Locate the mapping row for this store
@@ -684,6 +738,8 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 				break
 
 		if not store_row or not store_row.shopify_variant_id:
+			# Item is not mapped to this store. Expected when iterating
+			# all stores for an item; not an error.
 			continue
 
 		# Build a single-item payload and reuse the batched helpers.
@@ -702,6 +758,22 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 			if m.shopify_location_id and m.erpnext_warehouse
 		]
 		if not location_mapping:
+			# Has warehouse_mapping rows but all are incomplete (missing
+			# either the Shopify location_id or the ERPNext warehouse).
+			# This is a config error worth surfacing.
+			logger.warning(
+				"Single-item sync skipped for %s -> %s: warehouse_mapping has no valid (location, warehouse) pairs",
+				item_code,
+				store.name,
+			)
+			create_shopify_log(
+				status="Warning",
+				method="sync_single_item_inventory",
+				shopify_store=store.name,
+				message=f"No valid warehouse mapping for {store.name}; cannot sync {item_code}",
+				reference_doctype="Item",
+				reference_name=item_code,
+			)
 			continue
 
 		pairs = [(item_code, wh) for (_loc, wh) in location_mapping]
