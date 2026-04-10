@@ -179,6 +179,60 @@ class TestSetInventoryBatch(FrappeTestCase):
 		self.assertEqual(result.failed, [])
 		mock_exec.assert_not_called()
 
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_out_of_range_quantity_index_fails_whole_batch(self, mock_exec):
+		"""Regression: a userError with an out-of-range index must not silently
+		mark real rows as succeeded. It must fail the whole batch."""
+		mock_exec.return_value = {
+			"data": {
+				"inventorySetQuantities": {
+					"inventoryAdjustmentGroup": None,
+					"userErrors": [
+						{
+							"field": ["input", "quantities", "999", "quantity"],
+							"message": "Unresolvable row",
+							"code": "SCHEMA",
+						}
+					],
+				}
+			},
+			"extensions": {"cost": {"throttleStatus": {"currentlyAvailable": 950}}},
+		}
+		quantities = [
+			{"item_code": "ITEM-A", "inventory_item_id": "1001", "location_id": "loc1", "qty": 10},
+			{"item_code": "ITEM-B", "inventory_item_id": "1002", "location_id": "loc1", "qty": 0},
+		]
+		result = set_inventory_batch(quantities, "test.myshopify.com", "2026-04-10T10:00:00")
+		self.assertEqual(result.succeeded, [])
+		self.assertEqual(len(result.failed), 2)
+		# Error message should mention the unresolvable index for ops visibility
+		for _, msg in result.failed:
+			self.assertIn("unresolvable quantity index 999", msg)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_negative_quantity_index_fails_whole_batch(self, mock_exec):
+		"""A negative index is also out of range and must fail the batch."""
+		mock_exec.return_value = {
+			"data": {
+				"inventorySetQuantities": {
+					"inventoryAdjustmentGroup": None,
+					"userErrors": [
+						{
+							"field": ["input", "quantities", "-1", "quantity"],
+							"message": "Bad index",
+						}
+					],
+				}
+			},
+			"extensions": {"cost": {"throttleStatus": {"currentlyAvailable": 950}}},
+		}
+		quantities = [
+			{"item_code": "ITEM-A", "inventory_item_id": "1001", "location_id": "loc1", "qty": 10},
+		]
+		result = set_inventory_batch(quantities, "test.myshopify.com", "2026-04-10T10:00:00")
+		self.assertEqual(result.succeeded, [])
+		self.assertEqual(len(result.failed), 1)
+
 
 class TestFetchInventoryItemIds(FrappeTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
@@ -261,3 +315,44 @@ class TestExecuteGraphql(FrappeTestCase):
 			execute_graphql("query {}", {})
 		self.assertEqual(ctx.exception.http_status, 429)
 		self.assertEqual(ctx.exception.retry_after, 3.0)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.shopify")
+	def test_top_level_error_has_schema_sentinel(self, mock_shopify):
+		"""Top-level GraphQL errors use http_status=-1 so the retry wrapper
+		treats them as non-retryable schema/auth failures."""
+		client = mock_shopify.GraphQL.return_value
+		client.execute.return_value = '{"errors": [{"message": "Field X not found"}]}'
+		with self.assertRaises(ShopifyGraphQLError) as ctx:
+			execute_graphql("query {}", {})
+		self.assertEqual(ctx.exception.http_status, -1)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.shopify")
+	def test_json_decode_error_is_non_retryable(self, mock_shopify):
+		"""A malformed response (HTML error page, truncated JSON) must wrap
+		as a non-retryable ShopifyGraphQLError, not as a transient
+		http_status=None that the retry wrapper would retry."""
+		client = mock_shopify.GraphQL.return_value
+		client.execute.return_value = "<html>502 Bad Gateway</html>"
+		with self.assertRaises(ShopifyGraphQLError) as ctx:
+			execute_graphql("query {}", {})
+		self.assertEqual(ctx.exception.http_status, -1)
+		self.assertIn("parse", str(ctx.exception).lower())
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.shopify")
+	def test_non_transport_exception_propagates_unwrapped(self, mock_shopify):
+		"""A code bug (e.g. AttributeError) must propagate up, not be
+		silently wrapped as a retryable network error."""
+		client = mock_shopify.GraphQL.return_value
+		client.execute.side_effect = AttributeError("simulated code bug")
+		with self.assertRaises(AttributeError):
+			execute_graphql("query {}", {})
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.shopify")
+	def test_oserror_wraps_as_transport(self, mock_shopify):
+		"""ConnectionError (an OSError) must still be wrapped so the retry
+		wrapper can retry it as a transient network issue."""
+		client = mock_shopify.GraphQL.return_value
+		client.execute.side_effect = ConnectionError("connection reset by peer")
+		with self.assertRaises(ShopifyGraphQLError) as ctx:
+			execute_graphql("query {}", {})
+		self.assertIsNone(ctx.exception.http_status)

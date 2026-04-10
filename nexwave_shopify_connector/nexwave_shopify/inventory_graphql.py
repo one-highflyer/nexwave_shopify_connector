@@ -136,7 +136,20 @@ def execute_graphql(query: str, variables: dict[str, Any]) -> dict:
 	Run a GraphQL call via the Shopify SDK and return the decoded JSON dict.
 
 	Must be called inside a Session.temp() context.
-	Raises ShopifyGraphQLError on HTTP errors (with retry_after set if 429).
+
+	Error translation:
+	- HTTP/transport errors (urllib, pyactiveresource, OSError subclasses):
+	  wrapped as ShopifyGraphQLError with the appropriate http_status. 5xx
+	  and network errors are retryable; 4xx other than 429 are not.
+	- json.JSONDecodeError (malformed response, e.g. HTML error page):
+	  wrapped with http_status=-1 so the retry wrapper treats it as
+	  non-retryable. If the response isn't parseable JSON, retrying is
+	  unlikely to help and the root cause should surface immediately.
+	- Top-level GraphQL errors array (schema/auth failures): wrapped with
+	  http_status=-1 (see the `result.get("errors")` block below).
+	- Any other exception (NameError, TypeError, AttributeError, etc.) is
+	  a bug in this module; it propagates up to the caller's store-level
+	  handler rather than being silently retried as "network error".
 	"""
 	try:
 		client = shopify.GraphQL()
@@ -144,9 +157,23 @@ def execute_graphql(query: str, variables: dict[str, Any]) -> dict:
 		result = json.loads(result_str)
 	except ShopifyGraphQLError:
 		raise
+	except json.JSONDecodeError as e:
+		raise ShopifyGraphQLError(
+			f"Failed to parse Shopify GraphQL response: {e}",
+			http_status=-1,
+		) from e
 	except Exception as e:
-		# Translate HTTP errors from urllib / pyactiveresource
+		# Only translate errors that look like HTTP/transport failures.
+		# Anything else (code bugs, unexpected exception types) propagates
+		# up rather than being wrapped as a retryable transient.
 		status = getattr(e, "code", None) or getattr(e, "status_code", None)
+		is_transport_error = (
+			status is not None
+			or getattr(e, "response", None) is not None
+			or isinstance(e, OSError)  # ConnectionError, TimeoutError, etc.
+		)
+		if not is_transport_error:
+			raise
 		retry_after = None
 		if status == 429:
 			# urllib.error.HTTPError exposes .headers; pyactiveresource errors expose .response.headers
@@ -249,6 +276,14 @@ def set_inventory_batch(
 				quantity_index = int(field_path[2])
 			except (ValueError, TypeError):
 				quantity_index = None
+
+		# Validate the index points to a real row in this request. An
+		# out-of-range or negative index can't be mapped back to a source
+		# item, so treating it as a per-row error would silently mark
+		# every real row as succeeded. Escalate to a whole-batch failure.
+		if quantity_index is not None and not (0 <= quantity_index < len(quantities)):
+			global_errors.append(f"{full_msg} (unresolvable quantity index {quantity_index})")
+			continue
 
 		if quantity_index is None:
 			global_errors.append(full_msg)
