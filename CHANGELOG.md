@@ -1,3 +1,10 @@
+## [1.11.15](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.14...v1.11.15) (2026-04-12)
+
+
+### Bug Fixes
+
+* **inventory:** sync available qty instead of in-hand qty to Shopify ([6e6deb5](https://github.com/one-highflyer/nexwave_shopify_connector/commit/6e6deb5735322a62c612b7c84a5b8f6cc168b111))
+
 ## [1.11.14](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.13...v1.11.14) (2026-04-10)
 
 
