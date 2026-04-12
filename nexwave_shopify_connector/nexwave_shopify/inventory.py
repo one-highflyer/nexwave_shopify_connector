@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, now_datetime
+from frappe.utils import add_to_date, flt, now_datetime
 from shopify.api_version import ApiVersion
 from shopify.session import Session
 
@@ -372,10 +372,11 @@ def _execute_batch_with_retry(
 
 
 def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], float]:
-	"""Read actual_qty from tabBin for many (item_code, warehouse) pairs in one query.
+	"""Read available-for-sale quantity from tabBin for many (item_code, warehouse) pairs.
 
-	Returns a dict keyed by (item_code, warehouse). Missing pairs are absent;
-	callers should default to 0.
+	Available quantity is calculated as actual_qty minus reserved_qty, clamped
+	to a minimum of 0. Returns a dict keyed by (item_code, warehouse). Missing
+	pairs are absent; callers should default to 0.
 	"""
 	if not pairs:
 		return {}
@@ -390,7 +391,7 @@ def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], f
 
 	rows = frappe.db.sql(
 		"""
-		SELECT item_code, warehouse, actual_qty
+		SELECT item_code, warehouse, actual_qty, reserved_qty
 		FROM `tabBin`
 		WHERE item_code IN %(item_codes)s
 		  AND warehouse IN %(warehouses)s
@@ -399,9 +400,15 @@ def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], f
 		as_dict=True,
 	)
 
+	# Use actual_qty - reserved_qty to get the available-for-sale quantity.
+	# reserved_qty covers all submitted Sales Order commitments pending delivery
+	# (including those with Stock Reservation Entries, which are a subset).
+	# Future: this could be made configurable per Shopify Store with options
+	# such as Actual Qty, Actual minus Reserved, or Projected Qty.
 	result: dict[tuple[str, str], float] = {}
 	for row in rows:
-		result[(row["item_code"], row["warehouse"])] = row["actual_qty"] or 0
+		available = flt(row["actual_qty"]) - flt(row["reserved_qty"])
+		result[(row["item_code"], row["warehouse"])] = max(available, 0)
 	return result
 
 
@@ -642,17 +649,31 @@ def get_items_with_shopify_ids(store_name: str) -> list[dict]:
 
 def get_stock_qty(item_code: str, warehouse: str) -> float:
 	"""
-	Get actual stock quantity from ERPNext Bin.
+	Get available-for-sale stock quantity from ERPNext Bin.
+
+	Available quantity is actual_qty minus reserved_qty, clamped to a minimum
+	of 0. This excludes stock committed to submitted Sales Orders pending
+	delivery.
 
 	Args:
 		item_code: Item code
 		warehouse: Warehouse name
 
 	Returns:
-		Actual quantity (0 if no bin exists)
+		Available quantity (0 if no bin exists or stock is fully reserved)
 	"""
-	qty = frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty")
-	return qty or 0
+	# Use actual_qty - reserved_qty to match the bulk path (_bulk_get_stock_qty).
+	# Future: this could be made configurable per Shopify Store.
+	bin_data = frappe.db.get_value(
+		"Bin",
+		{"item_code": item_code, "warehouse": warehouse},
+		["actual_qty", "reserved_qty"],
+		as_dict=True,
+	)
+	if not bin_data:
+		return 0
+	available = flt(bin_data.actual_qty) - flt(bin_data.reserved_qty)
+	return max(available, 0)
 
 
 def sync_single_item_inventory(item_code: str, store_name: str | None = None):
