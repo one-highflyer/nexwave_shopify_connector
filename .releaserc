@@ -1,5 +1,8 @@
 {
-  "branches": ["version-16"],
+  "branches": [
+    { "name": "version-15", "range": "15.x", "channel": "v15" },
+    "version-16"
+  ],
   "plugins": [
     ["@semantic-release/commit-analyzer", {
       "preset": "angular",
