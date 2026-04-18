@@ -10,7 +10,7 @@ bookkeeping.
 
 from unittest.mock import patch
 
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
 	BatchResult,
@@ -22,7 +22,7 @@ from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
 )
 
 
-class TestThrottleStatus(FrappeTestCase):
+class TestThrottleStatus(IntegrationTestCase):
 	def test_from_full_extensions(self):
 		ext = {
 			"cost": {
@@ -49,7 +49,7 @@ class TestThrottleStatus(FrappeTestCase):
 		self.assertEqual(t.maximum_available, 1000)  # default
 
 
-class TestSetInventoryBatch(FrappeTestCase):
+class TestSetInventoryBatch(IntegrationTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
 	def test_all_succeed(self, mock_exec):
 		mock_exec.return_value = {
@@ -256,7 +256,7 @@ class TestSetInventoryBatch(FrappeTestCase):
 		mock_exec.assert_not_called()
 
 
-class TestFetchInventoryItemIds(FrappeTestCase):
+class TestFetchInventoryItemIds(IntegrationTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
 	def test_maps_gids_to_numeric(self, mock_exec):
 		mock_exec.return_value = {
@@ -324,7 +324,7 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 		self.assertFalse(result["2001"]["tracked"])
 
 
-class TestExecuteGraphql(FrappeTestCase):
+class TestExecuteGraphql(IntegrationTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.shopify")
 	def test_returns_parsed_json(self, mock_shopify):
 		client = mock_shopify.GraphQL.return_value

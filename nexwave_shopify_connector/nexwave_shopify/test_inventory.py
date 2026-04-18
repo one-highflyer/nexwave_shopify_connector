@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
 
 from nexwave_shopify_connector.nexwave_shopify._inventory_test_fixtures import (
@@ -45,7 +45,7 @@ def _noop_session(*args, **kwargs):
 	yield
 
 
-class TestSyncStoreInventory(FrappeTestCase):
+class TestSyncStoreInventory(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
@@ -547,7 +547,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 
-class TestExecuteBatchWithRetry(FrappeTestCase):
+class TestExecuteBatchWithRetry(IntegrationTestCase):
 	"""Unit tests for the retry wrapper around set_inventory_batch.
 
 	These tests mock both ``set_inventory_batch`` and ``time.sleep`` so the
@@ -715,7 +715,7 @@ class TestExecuteBatchWithRetry(FrappeTestCase):
 		mock_sleep.assert_not_called()
 
 
-class TestSyncSingleItemInventory(FrappeTestCase):
+class TestSyncSingleItemInventory(IntegrationTestCase):
 	"""Integration tests for sync_single_item_inventory."""
 
 	@classmethod
