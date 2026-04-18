@@ -21,7 +21,7 @@ NexWave Shopify Connector is a Frappe v15 app that provides multi-store Shopify 
 
 - **ci.yml**: Server tests (MariaDB + Redis + ERPNext) on push to version-* branches. Skips `chore(release):` commits.
 - **linter.yml**: Semgrep (Frappe rules + python.lang.correctness), pre-commit, pip-audit on PRs.
-- **release.yml**: Semantic-release on push to version-15.
+- **release.yml**: Semantic-release on push to `version-15` (releases in `15.x` range, channel `v15`) and `version-16` (releases in `16.x` range, channel `v16`). Version numbers track the target Frappe major.
 
 Semgrep findings are suppressed with `# nosemgrep` comments where intentional (webhook commits, admin context, guest webhook endpoint, file reads from app directories).
 
