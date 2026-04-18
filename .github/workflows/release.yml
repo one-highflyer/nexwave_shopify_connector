@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [version-15]
+    branches: [version-15, version-16]
 
 permissions:
   contents: write
