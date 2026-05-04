@@ -16,10 +16,14 @@ real Shopify Store records created via `_payment_test_fixtures`.
 """
 
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+
+if TYPE_CHECKING:
+	from frappe.model.document import Document
 
 from nexwave_shopify_connector.nexwave_shopify._payment_test_fixtures import (
 	TEST_GATEWAY_CARD,
@@ -298,7 +302,7 @@ class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture cleanup
 		super().tearDownClass()
 
-	def _create_si(self, grand_total: float, shopify_order_id: str) -> "frappe.model.document.Document":
+	def _create_si(self, grand_total: float, shopify_order_id: str) -> "Document":
 		si = create_test_sales_invoice_for_payment(
 			self.store,
 			grand_total=grand_total,
@@ -307,7 +311,7 @@ class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 		self.__class__.created_si_names.append(si.name)
 		return si
 
-	def _payment_entries_for_si(self, si_name: str) -> list[dict]:
+	def _payment_entries_for_si(self, si_name) -> list[dict]:
 		return frappe.get_all(
 			"Payment Entry",
 			filters={"reference_no": si_name, "docstatus": 1},
