@@ -174,9 +174,12 @@ def ensure_test_shopify_store_with_payment_mapping(**overrides) -> "Document":
 			"account": account,
 		},
 	}
-	existing_gateways = {row.shopify_gateway for row in store.payment_method_mapping or []}
+	existing_rows = {row.shopify_gateway: row for row in store.payment_method_mapping or []}
 	for gw, row_data in desired.items():
-		if gw in existing_gateways:
+		existing_row = existing_rows.get(gw)
+		if existing_row:
+			existing_row.mode_of_payment = row_data["mode_of_payment"]
+			existing_row.account = row_data["account"]
 			continue
 		store.append("payment_method_mapping", row_data)
 
@@ -310,4 +313,4 @@ def load_shopify_order(filename: str) -> dict:
 		Parsed JSON dict.
 	"""
 	path = Path(__file__).parent / "test_data" / filename
-	return json.loads(path.read_text())
+	return json.loads(path.read_text())  # nosemgrep - intentional app-directory read for test fixture
