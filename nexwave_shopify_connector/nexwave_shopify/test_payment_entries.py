@@ -282,7 +282,7 @@ class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 					pe = frappe.get_doc("Payment Entry", pe_name)
 					if pe.docstatus == 1:
 						pe.cancel()
-				except Exception:
+				except frappe.DoesNotExistError:
 					pass
 				frappe.delete_doc("Payment Entry", pe_name, force=True, ignore_missing=True)
 
@@ -290,7 +290,7 @@ class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 				si = frappe.get_doc("Sales Invoice", si_name)
 				if si.docstatus == 1:
 					si.cancel()
-			except Exception:
+			except frappe.DoesNotExistError:
 				pass
 			frappe.delete_doc("Sales Invoice", si_name, force=True, ignore_missing=True)
 
