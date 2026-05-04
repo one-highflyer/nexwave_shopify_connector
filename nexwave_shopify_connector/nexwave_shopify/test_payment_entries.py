@@ -230,6 +230,26 @@ class TestFetchOrderTransactions(FrappeTestCase):
 			result = _fetch_order_transactions(123, self.store)
 		self.assertEqual(result, [])
 
+	def test_fetch_wraps_get_password_failure(self):
+		"""`store.get_password` raising is wrapped as ShopifyTransactionFetchError.
+
+		The auth tuple is built inside the try/except, so a missing or
+		inaccessible encrypted password must not escape as a raw exception.
+		"""
+
+		class _StoreStub:
+			name = self.store.name
+			shop_domain = self.store.shop_domain
+			api_version = self.store.api_version
+
+			def get_password(self, _fieldname):
+				raise RuntimeError("no encrypted password set")
+
+		with self.assertRaises(ShopifyTransactionFetchError) as ctx:
+			_fetch_order_transactions(123, _StoreStub())
+		self.assertIsInstance(ctx.exception.__cause__, RuntimeError)
+		self.assertIn("123", str(ctx.exception))
+
 
 class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 	"""Tests for `_create_payment_entries` (orchestration + fetch logic)."""
@@ -344,6 +364,27 @@ class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 			pluck="name",
 		)
 		self.assertTrue(error_logs, "An Error log row should reference the SI on fetch failure")
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.order.create_shopify_log")
+	@patch("nexwave_shopify_connector.nexwave_shopify.order._fetch_order_transactions")
+	def test_multi_gateway_fetch_failure_logging_failure_is_swallowed(self, mock_fetch, mock_create_log):
+		"""If create_shopify_log itself raises, _create_payment_entries still returns cleanly.
+
+		The webhook handler relies on this helper never propagating fetch-failure
+		noise so the order.created/order.paid webhook is not retried.
+		"""
+		order = load_shopify_order("order_multi_gateway_no_transactions.json")
+		si = self._create_si(grand_total=314.78, shopify_order_id=str(order["id"]))
+
+		mock_fetch.side_effect = ShopifyTransactionFetchError("boom")
+		mock_create_log.side_effect = Exception("simulated db error")
+
+		# Must not raise even though both fetch and logging fail
+		_create_payment_entries(si, order, self.store)
+
+		mock_create_log.assert_called_once()
+		pes = self._payment_entries_for_si(si.name)
+		self.assertEqual(pes, [])
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.order._fetch_order_transactions")
 	def test_multi_gateway_fetch_returns_empty_skips_pe_creation(self, mock_fetch):

@@ -1505,18 +1505,24 @@ def _create_payment_entries(si, order: dict, store, posting_date=None):
 					order.get("id"),
 					e,
 				)
-				create_shopify_log(
-					status="Error",
-					method="_create_payment_entries",
-					shopify_store=store.name,
-					message=(
-						f"Failed to fetch Shopify transactions for order {order.get('id')}. "
-						f"Payment Entry creation skipped. {e}"
-					),
-					exception=str(e),
-					reference_doctype="Sales Invoice",
-					reference_name=si.name,
-				)
+				try:
+					create_shopify_log(
+						status="Error",
+						method="_create_payment_entries",
+						shopify_store=store.name,
+						message=(
+							f"Failed to fetch Shopify transactions for order {order.get('id')}. "
+							f"Payment Entry creation skipped. {e}"
+						),
+						exception=str(e),
+						reference_doctype="Sales Invoice",
+						reference_name=si.name,
+					)
+				except Exception:
+					logger.exception(
+						"Failed to write error log for fetch failure on order %s",
+						order.get("id"),
+					)
 				return
 
 			enriched_order = {**order, "transactions": fetched_txns}
@@ -1614,7 +1620,6 @@ def _fetch_order_transactions(order_id, store) -> list[dict]:
 	from shopify.resources import Transaction
 
 	api_version = store.api_version or DEFAULT_API_VERSION
-	auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
 
 	logger.info(
 		"Fetching transactions from Shopify for order %s, store %s",
@@ -1623,14 +1628,15 @@ def _fetch_order_transactions(order_id, store) -> list[dict]:
 	)
 
 	try:
+		auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
 		with Session.temp(*auth_details):
 			txns = Transaction.find(order_id=order_id)
+		result = [t.to_dict() for t in (txns or [])]
 	except Exception as e:
 		raise ShopifyTransactionFetchError(
 			f"Shopify API error fetching transactions for order {order_id}: {e}"
 		) from e
 
-	result = [t.to_dict() for t in (txns or [])]
 	logger.info(
 		"Fetched %d transactions from Shopify for order %s",
 		len(result),
