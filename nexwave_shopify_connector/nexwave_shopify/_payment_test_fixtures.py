@@ -270,13 +270,14 @@ def create_test_sales_invoice_for_payment(
 		{"company": company, "account_type": "Income Account", "is_group": 0},
 		"name",
 	)
+	company_currency = frappe.db.get_value("Company", company, "default_currency") or "INR"
 
 	si = frappe.get_doc(
 		{
 			"doctype": "Sales Invoice",
 			"customer": customer,
 			"company": company,
-			"currency": "NZD",
+			"currency": company_currency,
 			"shopify_store": store.name,
 			"shopify_order_id": shopify_order_id,
 			"shopify_order_number": "#TEST",
