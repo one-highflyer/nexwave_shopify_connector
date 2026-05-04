@@ -10,13 +10,16 @@ store. They are safe to call multiple times.
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import frappe
 from frappe.utils import flt
 from frappe.utils.password import set_encrypted_password
 
+if TYPE_CHECKING:
+	from frappe.model.document import Document
+
 TEST_COMPANY = "_Test Company"
-TEST_WAREHOUSE = "Stores - _TC"
 TEST_STORE_DOMAIN = "_test-payment-entry.myshopify.com"
 TEST_ITEM_GROUP = "All Item Groups"
 
@@ -27,27 +30,6 @@ TEST_GATEWAY_CARD = "shopify_payments"
 TEST_GATEWAY_STORE_CREDIT = "shopify_store_credit"
 
 
-def _get_default_warehouse() -> str:
-	"""Return a test warehouse that definitely exists.
-
-	Prefers `Stores - _TC`; falls back to any non-group warehouse linked to
-	_Test Company when run on a site where that name is not present.
-	"""
-	if frappe.db.exists("Warehouse", TEST_WAREHOUSE):
-		return TEST_WAREHOUSE
-	wh = frappe.db.get_value(
-		"Warehouse",
-		{"company": TEST_COMPANY, "is_group": 0},
-		"name",
-	)
-	if wh:
-		return wh
-	wh = frappe.db.get_value("Warehouse", {"is_group": 0}, "name")
-	if not wh:
-		raise RuntimeError("No warehouse available for tests")
-	return wh
-
-
 def _get_default_cash_account() -> str:
 	"""Find a usable Cash/Bank account for `_Test Company`.
 
@@ -56,7 +38,7 @@ def _get_default_cash_account() -> str:
 	"""
 	candidate = frappe.db.get_value("Account", "Cash - _TC", "name")
 	if candidate:
-		return candidate
+		return str(candidate)
 	acct = frappe.db.get_value(
 		"Account",
 		{
@@ -67,8 +49,7 @@ def _get_default_cash_account() -> str:
 		"name",
 	)
 	if acct:
-		return acct
-	# Last resort: any non-group leaf account linked to the company
+		return str(acct)
 	acct = frappe.db.get_value(
 		"Account",
 		{"company": TEST_COMPANY, "is_group": 0},
@@ -76,7 +57,7 @@ def _get_default_cash_account() -> str:
 	)
 	if not acct:
 		raise RuntimeError("No usable account available for payment entry tests")
-	return acct
+	return str(acct)
 
 
 def ensure_test_payment_methods() -> None:
@@ -119,7 +100,7 @@ def ensure_test_payment_methods() -> None:
 			mop.save(ignore_permissions=True)
 
 
-def ensure_test_shopify_store_with_payment_mapping(**overrides) -> "frappe.model.document.Document":
+def ensure_test_shopify_store_with_payment_mapping(**overrides) -> "Document":
 	"""Create (or update) an idempotent Shopify Store with payment method mappings.
 
 	The store is `enabled=1`, has `auto_create_payment_entry=1`, and has
@@ -226,7 +207,7 @@ def _ensure_test_customer(customer_name: str) -> str:
 	doc.flags.ignore_validate = True
 	doc.flags.ignore_mandatory = True
 	doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
-	return doc.name
+	return str(doc.name)
 
 
 def _ensure_test_item(item_code: str = "_Test Shopify Payment Item") -> str:
@@ -245,7 +226,7 @@ def _ensure_test_item(item_code: str = "_Test Shopify Payment Item") -> str:
 	doc.flags.ignore_validate = True
 	doc.flags.ignore_mandatory = True
 	doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
-	return doc.name
+	return str(doc.name)
 
 
 def create_test_sales_invoice_for_payment(
