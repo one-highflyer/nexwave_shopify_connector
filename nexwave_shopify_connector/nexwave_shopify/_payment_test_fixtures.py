@@ -25,9 +25,11 @@ TEST_ITEM_GROUP = "All Item Groups"
 
 TEST_MODE_OF_PAYMENT_CARD = "_Test Shopify Card"
 TEST_MODE_OF_PAYMENT_STORE_CREDIT = "_Test Shopify Store Credit"
+TEST_MODE_OF_PAYMENT_GIFT_CARD = "_Test Shopify Gift Card"
 
 TEST_GATEWAY_CARD = "shopify_payments"
 TEST_GATEWAY_STORE_CREDIT = "shopify_store_credit"
+TEST_GATEWAY_GIFT_CARD = "gift_card"
 
 
 def _get_default_cash_account() -> str:
@@ -69,7 +71,11 @@ def ensure_test_payment_methods() -> None:
 	"""
 	account = _get_default_cash_account()
 
-	for mop_name in (TEST_MODE_OF_PAYMENT_CARD, TEST_MODE_OF_PAYMENT_STORE_CREDIT):
+	for mop_name in (
+		TEST_MODE_OF_PAYMENT_CARD,
+		TEST_MODE_OF_PAYMENT_STORE_CREDIT,
+		TEST_MODE_OF_PAYMENT_GIFT_CARD,
+	):
 		if not frappe.db.exists("Mode of Payment", mop_name):
 			doc = frappe.get_doc(
 				{
@@ -160,6 +166,11 @@ def ensure_test_shopify_store_with_payment_mapping(**overrides) -> "Document":
 		TEST_GATEWAY_STORE_CREDIT: {
 			"shopify_gateway": TEST_GATEWAY_STORE_CREDIT,
 			"mode_of_payment": TEST_MODE_OF_PAYMENT_STORE_CREDIT,
+			"account": account,
+		},
+		TEST_GATEWAY_GIFT_CARD: {
+			"shopify_gateway": TEST_GATEWAY_GIFT_CARD,
+			"mode_of_payment": TEST_MODE_OF_PAYMENT_GIFT_CARD,
 			"account": account,
 		},
 	}

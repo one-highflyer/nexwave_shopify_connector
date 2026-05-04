@@ -23,8 +23,10 @@ from frappe.tests.utils import FrappeTestCase
 
 from nexwave_shopify_connector.nexwave_shopify._payment_test_fixtures import (
 	TEST_GATEWAY_CARD,
+	TEST_GATEWAY_GIFT_CARD,
 	TEST_GATEWAY_STORE_CREDIT,
 	TEST_MODE_OF_PAYMENT_CARD,
+	TEST_MODE_OF_PAYMENT_GIFT_CARD,
 	TEST_MODE_OF_PAYMENT_STORE_CREDIT,
 	create_test_sales_invoice_for_payment,
 	ensure_test_shopify_store_with_payment_mapping,
@@ -456,3 +458,98 @@ class TestCreatePaymentEntriesOrchestrator(FrappeTestCase):
 		amounts_by_mop = {pe["mode_of_payment"]: pe["paid_amount"] for pe in pes}
 		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_STORE_CREDIT], 100.00)
 		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_CARD], 214.78)
+
+	# ------------------------------------------------------------------
+	# Edge cases: rounding, three gateways, non-paid statuses
+	# ------------------------------------------------------------------
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.order._fetch_order_transactions")
+	def test_multi_gateway_fetch_last_gateway_absorbs_rounding_remainder(self, mock_fetch):
+		"""When fetched transaction amounts don't sum exactly to grand_total,
+		the last gateway is paid the remaining amount (not its own raw amount).
+
+		This covers the rounding-protection branch in `_create_payment_entries`
+		so that PEs always reconcile to the SI grand_total, even if Shopify's
+		transaction amounts and our SI's grand_total disagree by a few cents
+		(common with cross-currency payments or rounding of partials).
+		"""
+		order = load_shopify_order("order_multi_gateway_no_transactions.json")
+		# Use a unique order id so this test's SI doesn't collide with the
+		# happy-path test that reuses the same fixture.
+		shopify_order_id = f"{order['id']}_rounding"
+		si = self._create_si(grand_total=314.78, shopify_order_id=shopify_order_id)
+
+		# Transactions sum to 314.83 but SI grand_total is 314.78
+		# -> first gateway gets its raw amount (100.05), last gets remainder (214.73).
+		mock_fetch.return_value = [
+			_make_txn(TEST_GATEWAY_STORE_CREDIT, "100.05"),
+			_make_txn(TEST_GATEWAY_CARD, "214.78"),
+		]
+
+		_create_payment_entries(si, order, self.store)
+
+		pes = self._payment_entries_for_si(si.name)
+		self.assertEqual(len(pes), 2)
+		amounts_by_mop = {pe["mode_of_payment"]: pe["paid_amount"] for pe in pes}
+		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_STORE_CREDIT], 100.05, places=2)
+		# Last gateway absorbs the 0.05 over-payment so PE total = SI grand_total.
+		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_CARD], 214.73, places=2)
+		total_paid = sum(amounts_by_mop.values())
+		self.assertAlmostEqual(total_paid, 314.78, places=2)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.order._fetch_order_transactions")
+	def test_multi_gateway_fetch_three_gateways_creates_three_pes(self, mock_fetch):
+		"""Fetch path supports 3+ gateways. Last gateway still gets remainder.
+
+		Covers the case where a customer pays with three distinct methods
+		(e.g. store credit + gift card + card) and the fetch path is exercised
+		because the webhook payload omitted transactions.
+		"""
+		order = load_shopify_order("order_multi_gateway_no_transactions.json")
+		# Override payment_gateway_names on the order so multi-gateway gating
+		# (len > 1) still passes; the actual count doesn't matter, just > 1.
+		order = {
+			**order,
+			"payment_gateway_names": [
+				TEST_GATEWAY_STORE_CREDIT,
+				TEST_GATEWAY_GIFT_CARD,
+				TEST_GATEWAY_CARD,
+			],
+		}
+		shopify_order_id = f"{order['id']}_three"
+		si = self._create_si(grand_total=300.00, shopify_order_id=shopify_order_id)
+
+		mock_fetch.return_value = [
+			_make_txn(TEST_GATEWAY_STORE_CREDIT, "50.00"),
+			_make_txn(TEST_GATEWAY_GIFT_CARD, "100.00"),
+			_make_txn(TEST_GATEWAY_CARD, "150.00"),
+		]
+
+		_create_payment_entries(si, order, self.store)
+
+		pes = self._payment_entries_for_si(si.name)
+		self.assertEqual(len(pes), 3, f"Expected 3 PEs, got: {pes}")
+		amounts_by_mop = {pe["mode_of_payment"]: pe["paid_amount"] for pe in pes}
+		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_STORE_CREDIT], 50.00, places=2)
+		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_GIFT_CARD], 100.00, places=2)
+		self.assertAlmostEqual(amounts_by_mop[TEST_MODE_OF_PAYMENT_CARD], 150.00, places=2)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.order._fetch_order_transactions")
+	def test_multi_gateway_partially_paid_does_not_call_api(self, mock_fetch):
+		"""Multi-gateway order with `financial_status != "paid"` skips the fetch.
+
+		Documents the deliberate gating in `_create_payment_entries`: the fetch
+		path only runs for fully-paid orders. Pending/partially_paid/authorized
+		orders are skipped silently (no PE, no API call). When Shopify later
+		fires `orders/paid`, that webhook will re-trigger PE creation.
+		"""
+		order = load_shopify_order("order_multi_gateway_no_transactions.json")
+		order = {**order, "financial_status": "partially_paid"}
+		shopify_order_id = f"{order['id']}_partial"
+		si = self._create_si(grand_total=314.78, shopify_order_id=shopify_order_id)
+
+		_create_payment_entries(si, order, self.store)
+
+		mock_fetch.assert_not_called()
+		pes = self._payment_entries_for_si(si.name)
+		self.assertEqual(pes, [])
