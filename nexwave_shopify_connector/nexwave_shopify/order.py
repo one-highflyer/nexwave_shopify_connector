@@ -19,6 +19,11 @@ from nexwave_shopify_connector.nexwave_shopify.tax import TaxBuilder, apply_roun
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log, sanitize_phone_number
 from nexwave_shopify_connector.utils.logger import get_logger
 
+
+class ShopifyTransactionFetchError(Exception):
+	"""Raised when fetching order transactions from Shopify REST API fails."""
+
+
 # =============================================================================
 # Core Shared Function
 # =============================================================================
@@ -1481,6 +1486,48 @@ def _create_payment_entries(si, order: dict, store, posting_date=None):
 	# Get payment amounts per gateway from transactions
 	gateway_amounts = _get_payment_amounts_by_gateway(order)
 
+	# If the parser found nothing AND this is a multi-gateway paid order
+	# without transactions in the payload, fetch transactions from Shopify.
+	# Shopify webhook payloads for orders/create and orders/paid don't
+	# include the transactions array, which means split-payment orders
+	# would silently skip payment entry creation otherwise.
+	if not gateway_amounts:
+		payment_gateways = order.get("payment_gateway_names") or []
+		is_multi_gateway = len(payment_gateways) > 1
+		is_paid = order.get("financial_status") == "paid"
+
+		if is_multi_gateway and is_paid and not order.get("transactions"):
+			try:
+				fetched_txns = _fetch_order_transactions(order["id"], store)
+			except ShopifyTransactionFetchError as e:
+				logger.warning(
+					"Failed to fetch transactions for order %s, skipping payment entry creation: %s",
+					order.get("id"),
+					e,
+				)
+				try:
+					create_shopify_log(
+						status="Error",
+						method="_create_payment_entries",
+						shopify_store=store.name,
+						message=(
+							f"Failed to fetch Shopify transactions for order {order.get('id')}. "
+							f"Payment Entry creation skipped. {e}"
+						),
+						exception=str(e),
+						reference_doctype="Sales Invoice",
+						reference_name=si.name,
+					)
+				except Exception:
+					logger.exception(
+						"Failed to write error log for fetch failure on order %s",
+						order.get("id"),
+					)
+				return
+
+			enriched_order = {**order, "transactions": fetched_txns}
+			gateway_amounts = _get_payment_amounts_by_gateway(enriched_order)
+
 	if not gateway_amounts:
 		logger.warning(
 			"No successful payment transactions found in order %s, skipping payment entry creation",
@@ -1549,6 +1596,55 @@ def _create_payment_entries(si, order: dict, store, posting_date=None):
 		)
 
 
+def _fetch_order_transactions(order_id, store) -> list[dict]:
+	"""
+	Fetch transactions for a Shopify order via the Shopify SDK.
+
+	Reuses the store's auth context (shop_domain, api_version, access_token)
+	via Session.temp, identical to other API calls in this module.
+
+	Args:
+		order_id: Shopify order id (numeric).
+		store: Shopify Store document.
+
+	Returns:
+		List of transaction dicts. Each dict has the same shape Shopify
+		embeds in webhook payloads when transactions are included
+		(kind, status, gateway, amount, currency, id, etc.).
+
+	Raises:
+		ShopifyTransactionFetchError: Wraps any underlying SDK / HTTP / parsing
+			error so the caller can decide how to handle it.
+	"""
+	logger = get_logger()
+	from shopify.resources import Transaction
+
+	api_version = store.api_version or DEFAULT_API_VERSION
+
+	logger.info(
+		"Fetching transactions from Shopify for order %s, store %s",
+		order_id,
+		store.name,
+	)
+
+	try:
+		auth_details = (store.shop_domain, api_version, store.get_password("access_token"))
+		with Session.temp(*auth_details):
+			txns = Transaction.find(order_id=order_id)
+		result = [t.to_dict() for t in (txns or [])]
+	except Exception as e:
+		raise ShopifyTransactionFetchError(
+			f"Shopify API error fetching transactions for order {order_id}: {e}"
+		) from e
+
+	logger.info(
+		"Fetched %d transactions from Shopify for order %s",
+		len(result),
+		order_id,
+	)
+	return result
+
+
 def _get_payment_amounts_by_gateway(order: dict) -> dict:
 	"""
 	Parse Shopify order transactions to get payment amounts grouped by gateway.
@@ -1579,30 +1675,20 @@ def _get_payment_amounts_by_gateway(order: dict) -> dict:
 		else:
 			gateway_amounts[gateway] = amount
 
-	# If no transactions found, fall back to payment_gateway_names with total amount
-	# But only if there's a single gateway - for split payments we can't determine amounts
+	# If no transactions found, fall back to payment_gateway_names with total amount.
+	# Only the single-gateway case is handled here. The multi-gateway-no-transactions
+	# case is handled by _create_payment_entries fetching transactions from the
+	# Shopify REST API, since the parser has no I/O dependencies.
 	if not gateway_amounts:
 		logger = get_logger()
 		payment_gateways = order.get("payment_gateway_names") or []
-		if payment_gateways and order.get("financial_status") == "paid":
-			if len(payment_gateways) > 1:
-				# Multiple gateways without transaction data - can't determine split amounts
-				logger.warning(
-					"Order %s has multiple payment gateways %s but no transaction data. "
-					"Cannot determine payment split - skipping automatic payment entry creation.",
-					order.get("id"),
-					payment_gateways,
-				)
-				# Return empty to skip payment entry creation
-				return gateway_amounts
-
+		if payment_gateways and order.get("financial_status") == "paid" and len(payment_gateways) == 1:
 			logger.warning(
 				"No transaction data found for paid order %s, using fallback: gateway=%s, amount=%s",
 				order.get("id"),
 				payment_gateways[0],
 				flt(order.get("total_price")),
 			)
-			# Single gateway - safe to use full amount
 			gateway_amounts[payment_gateways[0]] = flt(order.get("total_price"))
 
 	return gateway_amounts
