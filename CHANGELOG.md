@@ -1,3 +1,12 @@
+## [15.0.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.0.0...v15.0.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **order:** fetch transactions from Shopify when payload omits them ([61b077e](https://github.com/one-highflyer/nexwave_shopify_connector/commit/61b077ec7cb3a9a44775a42ffe2ddebde3b0e6f9))
+* **order:** harden payment fetch error handling ([75e5300](https://github.com/one-highflyer/nexwave_shopify_connector/commit/75e5300f48b9face014a50673a0f90e80cf89033))
+* **test:** use company default currency in payment test fixtures ([1cdcf7a](https://github.com/one-highflyer/nexwave_shopify_connector/commit/1cdcf7a07fda3b8f83a58709ddbcdde6644e20ef))
+
 ## [1.11.15](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v1.11.14...v1.11.15) (2026-04-12)
 
 
