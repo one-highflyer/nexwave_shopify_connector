@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 	from nexwave_shopify_connector.nexwave_shopify.doctype.shopify_store.shopify_store import ShopifyStore
 
 
+INVENTORY_SYNC_MODE_FULL = "Full Inventory"
+INVENTORY_SYNC_MODE_CHANGED_BINS = "Changed Bins"
+
+INVENTORY_SYNC_METHOD_FULL = "nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory"
+INVENTORY_SYNC_METHOD_CHANGED_BINS = (
+	"nexwave_shopify_connector.nexwave_shopify.inventory.sync_changed_bin_inventory"
+)
+
+
 def update_inventory_on_shopify():
 	"""
 	Scheduler job - sync inventory for all enabled stores.
@@ -46,9 +55,13 @@ def update_inventory_on_shopify():
 		if not _should_sync_inventory(store):
 			continue
 
+		sync_method = INVENTORY_SYNC_METHOD_FULL
+		if (store.get("inventory_sync_mode") or INVENTORY_SYNC_MODE_FULL) == INVENTORY_SYNC_MODE_CHANGED_BINS:
+			sync_method = INVENTORY_SYNC_METHOD_CHANGED_BINS
+
 		# Enqueue inventory sync for this store
 		frappe.enqueue(
-			"nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory",
+			sync_method,
 			queue="long",
 			timeout=10800,  # 3 hour timeout for large inventories
 			job_id=f"inventory_sync_{store_name}",
@@ -74,6 +87,15 @@ def _should_sync_inventory(store) -> bool:
 	next_sync_time = add_to_date(store.last_inventory_sync, minutes=frequency_minutes)
 
 	return now_datetime() >= next_sync_time
+
+
+def _get_location_mapping(store) -> list[tuple[str, str]]:
+	"""Return valid (Shopify location id, ERPNext warehouse) pairs for a store."""
+	return [
+		(m.shopify_location_id, m.erpnext_warehouse)
+		for m in store.warehouse_mapping or []
+		if m.shopify_location_id and m.erpnext_warehouse
+	]
 
 
 def sync_store_inventory(store_name: str, force: bool = False):
@@ -145,11 +167,7 @@ def sync_store_inventory(store_name: str, force: bool = False):
 		return
 
 	# Build location mapping from warehouse_mapping
-	location_mapping: list[tuple[str, str]] = [
-		(m.shopify_location_id, m.erpnext_warehouse)
-		for m in store.warehouse_mapping
-		if m.shopify_location_id and m.erpnext_warehouse
-	]
+	location_mapping = _get_location_mapping(store)
 	if not location_mapping:
 		logger.error("No valid location mappings for inventory sync for Shopify store: %s", store_name)
 		frappe.log_error(
@@ -307,6 +325,328 @@ def sync_store_inventory(store_name: str, force: bool = False):
 			reference_doctype="Shopify Store",
 			reference_name=store_name,
 		)
+
+
+def sync_changed_bin_inventory(store_name: str, force: bool = False):
+	"""
+	Sync only items with changed stock Bin rows or recently synced Shopify mappings.
+
+	An empty cursor falls back to a full inventory sync to establish the first
+	baseline. The cursor only advances after all selected items are processed
+	without errors; no-op scans also advance the cursor.
+	"""
+	logger = get_logger()
+	logger.info("Syncing changed Bin inventory for Shopify store: %s", store_name)
+	store = frappe.get_doc("Shopify Store", store_name)
+
+	if not store.enabled or not store.enable_inventory_sync:
+		return
+
+	if not store.warehouse_mapping:
+		logger.error("No warehouse mappings configured for inventory sync for Shopify store: %s", store_name)
+		frappe.log_error(
+			title=f"Shopify Inventory Sync - {store_name}",
+			message="No warehouse mappings configured for inventory sync",
+		)
+		return
+
+	if not force and not _should_sync_inventory(store):
+		logger.info(
+			"Skipping changed Bin inventory sync for %s, already synced at %s",
+			store_name,
+			store.last_inventory_sync,
+		)
+		return
+
+	skip_stores = frappe.conf.get("nexwave_shopify_disable_graphql_inventory_sync") or []
+	if store_name in skip_stores:
+		logger.warning("Changed Bin inventory sync disabled via bench config for %s", store_name)
+		return
+
+	if not store.last_inventory_sync:
+		logger.info("No inventory sync cursor for %s; running full inventory sync baseline", store_name)
+		sync_store_inventory(store_name, force=True)
+		return
+
+	location_mapping = _get_location_mapping(store)
+	if not location_mapping:
+		logger.error("No valid location mappings for inventory sync for Shopify store: %s", store_name)
+		frappe.log_error(
+			title=f"Shopify Inventory Sync - {store_name}",
+			message="No valid location mappings (location_id + warehouse) configured",
+		)
+		return
+
+	t0 = time.monotonic()
+	scan_started_at = now_datetime()
+	item_codes = _get_changed_inventory_item_codes(
+		store=store,
+		since=store.last_inventory_sync,
+		until=scan_started_at,
+		location_mapping=location_mapping,
+	)
+
+	if not item_codes:
+		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", scan_started_at)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
+		elapsed = int(time.monotonic() - t0)
+		summary = f"Changed Bin sync complete: 0 synced, 0 skipped, 0 errors, {elapsed}s"
+		logger.info("%s - store=%s status=Success", summary, store_name)
+		create_shopify_log(
+			status="Success",
+			method="sync_changed_bin_inventory",
+			shopify_store=store_name,
+			message=summary,
+			reference_doctype="Shopify Store",
+			reference_name=store_name,
+		)
+		return
+
+	stats = sync_items_inventory(store_name, item_codes, source="changed_bins")
+	if stats["errors"] == 0:
+		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", scan_started_at)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
+
+	if stats["errors"] > 0 and stats["synced"] == 0:
+		status = "Error"
+	elif stats["errors"] > 0:
+		status = "Warning"
+	else:
+		status = "Success"
+
+	summary = (
+		f"Changed Bin sync complete: {stats['synced']} synced, {stats['skipped']} skipped, "
+		f"{stats['errors']} errors, {stats['elapsed']}s"
+	)
+	logger.info("%s - store=%s status=%s", summary, store_name, status)
+	create_shopify_log(
+		status=status,
+		method="sync_changed_bin_inventory",
+		shopify_store=store_name,
+		message=summary,
+		reference_doctype="Shopify Store",
+		reference_name=store_name,
+	)
+
+
+def sync_items_inventory(
+	store_name: str,
+	item_codes: list[str] | tuple[str, ...] | set[str],
+	source: str = "changed_bins",
+) -> dict[str, int]:
+	"""Sync inventory for a provided set of item codes using the bulk GraphQL path."""
+	logger = get_logger()
+	method = "sync_changed_bin_inventory" if source == "changed_bins" else "sync_items_inventory"
+	t0 = time.monotonic()
+	stats = {"synced": 0, "skipped": 0, "errors": 0, "elapsed": 0}
+	item_codes = sorted({item_code for item_code in item_codes if item_code})
+
+	if not item_codes:
+		return stats
+
+	try:
+		store = frappe.get_doc("Shopify Store", store_name)
+		if not store.enabled or not store.enable_inventory_sync:
+			return stats
+
+		skip_stores = frappe.conf.get("nexwave_shopify_disable_graphql_inventory_sync") or []
+		if store_name in skip_stores:
+			logger.warning("Inventory sync disabled via bench config for %s", store_name)
+			return stats
+
+		location_mapping = _get_location_mapping(store)
+		if not location_mapping:
+			logger.error("No valid location mappings for inventory sync for Shopify store: %s", store_name)
+			create_shopify_log(
+				status="Error",
+				method=method,
+				shopify_store=store_name,
+				message="No valid location mappings (location_id + warehouse) configured",
+				reference_doctype="Shopify Store",
+				reference_name=store_name,
+			)
+			stats["errors"] = len(item_codes)
+			return stats
+
+		_init_shopify_api_versions()
+		api_version = store.api_version or DEFAULT_API_VERSION
+		access_token = store.get_password("access_token")
+		if not access_token:
+			create_shopify_log(
+				status="Error",
+				method=method,
+				shopify_store=store_name,
+				message=f"Access token not configured for store {store_name}",
+				reference_doctype="Shopify Store",
+				reference_name=store_name,
+			)
+			stats["errors"] = len(item_codes)
+			return stats
+
+		items_to_sync = get_items_with_shopify_ids(store_name, item_codes=item_codes)
+		if not items_to_sync:
+			return stats
+
+		pairs = [(item["item_code"], wh) for item in items_to_sync for (_loc, wh) in location_mapping]
+		qty_by_pair = _bulk_get_stock_qty(pairs)
+		timestamp_iso = now_datetime().isoformat()
+
+		with Session.temp(store.shop_domain, api_version, access_token):
+			items_to_sync, skipped_backfill, errored_backfill = _resolve_inventory_item_ids(
+				store_name, items_to_sync, logger
+			)
+			stats["skipped"] += len(skipped_backfill)
+			stats["errors"] += len(errored_backfill)
+			for item in errored_backfill:
+				create_shopify_log(
+					status="Error",
+					method=method,
+					shopify_store=store_name,
+					message=f"Backfill failed for {item.get('item_code')}",
+					exception=item.get("_error_reason", ""),
+					reference_doctype="Item",
+					reference_name=item.get("item_code"),
+				)
+
+			for location_id, warehouse in location_mapping:
+				qty_entries = _build_quantities_for_location(
+					location_id, warehouse, items_to_sync, qty_by_pair
+				)
+				if not qty_entries:
+					continue
+
+				num_batches = max(1, math.ceil(len(qty_entries) / INVENTORY_BATCH_SIZE))
+				for i, chunk in enumerate(_chunked(qty_entries, INVENTORY_BATCH_SIZE), start=1):
+					batch_t0 = time.monotonic()
+					try:
+						result = _execute_batch_with_retry(
+							chunk=chunk,
+							store_name=store_name,
+							timestamp_iso=timestamp_iso,
+							logger=logger,
+						)
+					except ShopifyGraphQLError as e:
+						stats["errors"] += len(chunk)
+						for q in chunk:
+							create_shopify_log(
+								status="Error",
+								method=method,
+								shopify_store=store_name,
+								message=f"Batch failed for {q['item_code']}",
+								exception=str(e),
+								reference_doctype="Item",
+								reference_name=q["item_code"],
+								request_data={
+									"location_id": location_id,
+									"qty": q["qty"],
+								},
+							)
+						continue
+
+					stats["synced"] += len(result.succeeded)
+					stats["errors"] += len(result.failed)
+					for item_code, err_msg in result.failed:
+						create_shopify_log(
+							status="Error",
+							method=method,
+							shopify_store=store_name,
+							message=f"Shopify userError for {item_code}",
+							exception=err_msg,
+							reference_doctype="Item",
+							reference_name=item_code,
+						)
+
+					batch_elapsed = time.monotonic() - batch_t0
+					logger.info(
+						"Processed %s batch %s/%s (%s items) in %.2fs for location %s, %s cost pts remaining",
+						source,
+						i,
+						num_batches,
+						len(chunk),
+						batch_elapsed,
+						location_id,
+						result.throttle.currently_available,
+					)
+					_throttle_if_needed(result.throttle, logger)
+
+	except Exception as e:
+		logger.error(
+			"Item inventory sync error for Shopify store: %s, error: %s",
+			store_name,
+			str(e),
+			exc_info=True,
+		)
+		create_shopify_log(
+			status="Error",
+			method=method,
+			shopify_store=store_name,
+			message=f"Item inventory sync error: {e!s}",
+			exception=frappe.get_traceback(),
+			reference_doctype="Shopify Store",
+			reference_name=store_name,
+		)
+		stats["errors"] += max(len(item_codes), 1)
+	finally:
+		stats["elapsed"] = int(time.monotonic() - t0)
+
+	return stats
+
+
+def _get_changed_inventory_item_codes(
+	store,
+	since,
+	until,
+	location_mapping: list[tuple[str, str]] | None = None,
+) -> list[str]:
+	"""Return mapped item codes whose Bin or store mapping changed inside the cursor window."""
+	location_mapping = location_mapping or _get_location_mapping(store)
+	warehouses = tuple(sorted({warehouse for (_location, warehouse) in location_mapping if warehouse}))
+	if not warehouses or not since or not until:
+		return []
+
+	params = {
+		"store_name": store.name,
+		"warehouses": warehouses,
+		"since": since,
+		"until": until,
+	}
+	bin_rows = frappe.db.sql(
+		"""
+		SELECT DISTINCT iss.parent AS item_code
+		FROM `tabItem Shopify Store` iss
+		JOIN `tabItem` item ON item.name = iss.parent
+		JOIN `tabBin` bin ON bin.item_code = iss.parent
+		WHERE iss.shopify_store = %(store_name)s
+		  AND iss.enabled = 1
+		  AND iss.shopify_variant_id IS NOT NULL
+		  AND iss.shopify_variant_id != ''
+		  AND item.disabled = 0
+		  AND bin.warehouse IN %(warehouses)s
+		  AND bin.modified > %(since)s
+		  AND bin.modified <= %(until)s
+		""",
+		params,
+		as_dict=True,
+	)
+	mapping_rows = frappe.db.sql(
+		"""
+		SELECT DISTINCT iss.parent AS item_code
+		FROM `tabItem Shopify Store` iss
+		JOIN `tabItem` item ON item.name = iss.parent
+		WHERE iss.shopify_store = %(store_name)s
+		  AND iss.enabled = 1
+		  AND iss.shopify_variant_id IS NOT NULL
+		  AND iss.shopify_variant_id != ''
+		  AND item.disabled = 0
+		  AND iss.last_sync_at IS NOT NULL
+		  AND iss.last_sync_at > %(since)s
+		  AND iss.last_sync_at <= %(until)s
+		""",
+		params,
+		as_dict=True,
+	)
+
+	return sorted({row["item_code"] for row in [*bin_rows, *mapping_rows]})
 
 
 def _execute_batch_with_retry(
@@ -615,19 +955,32 @@ def _init_shopify_api_versions():
 		ApiVersion.fetch_known_versions()
 
 
-def get_items_with_shopify_ids(store_name: str) -> list[dict]:
+def get_items_with_shopify_ids(
+	store_name: str,
+	item_codes: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> list[dict]:
 	"""
 	Get all items that have Shopify product/variant IDs for this store.
 
 	Args:
 		store_name: Shopify Store name
+		item_codes: Optional item code filter
 
 	Returns:
 		List of dicts with item_code, shopify_product_id, shopify_variant_id,
 		shopify_inventory_item_id
 	"""
+	item_filter = ""
+	params = {"store_name": store_name}
+	if item_codes is not None:
+		item_codes = sorted({item_code for item_code in item_codes if item_code})
+		if not item_codes:
+			return []
+		item_filter = "AND iss.parent IN %(item_codes)s"
+		params["item_codes"] = tuple(item_codes)
+
 	return frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			iss.parent as item_code,
 			iss.shopify_product_id,
@@ -636,13 +989,14 @@ def get_items_with_shopify_ids(store_name: str) -> list[dict]:
 		FROM `tabItem Shopify Store` iss
 		JOIN `tabItem` item ON item.name = iss.parent
 		WHERE
-			iss.shopify_store = %s
+			iss.shopify_store = %(store_name)s
 			AND iss.enabled = 1
 			AND iss.shopify_variant_id IS NOT NULL
 			AND iss.shopify_variant_id != ''
 			AND item.disabled = 0
+			{item_filter}
 		""",
-		(store_name,),
+		params,
 		as_dict=True,
 	)
 
@@ -773,11 +1127,7 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 			}
 		]
 
-		location_mapping = [
-			(m.shopify_location_id, m.erpnext_warehouse)
-			for m in store.warehouse_mapping
-			if m.shopify_location_id and m.erpnext_warehouse
-		]
+		location_mapping = _get_location_mapping(store)
 		if not location_mapping:
 			# Has warehouse_mapping rows but all are incomplete (missing
 			# either the Shopify location_id or the ERPNext warehouse).

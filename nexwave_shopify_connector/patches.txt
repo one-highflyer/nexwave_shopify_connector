@@ -5,3 +5,4 @@
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 nexwave_shopify_connector.patches.v1_5.add_composite_unique_index_for_fulfillment
+nexwave_shopify_connector.patches.v1_5.set_default_inventory_sync_mode

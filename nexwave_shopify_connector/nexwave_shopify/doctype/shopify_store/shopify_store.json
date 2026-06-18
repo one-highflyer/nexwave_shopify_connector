@@ -48,6 +48,7 @@
   "payment_method_mapping",
   "section_break_inventory",
   "enable_inventory_sync",
+  "inventory_sync_mode",
   "warehouse",
   "inventory_sync_frequency",
   "column_break_inventory",
@@ -349,6 +350,14 @@
    "label": "Enable Inventory Sync"
   },
   {
+   "default": "Full Inventory",
+   "description": "Full Inventory syncs every mapped item. Changed Bins syncs only items whose stock Bin or Shopify mapping changed since the last successful inventory sync.",
+   "fieldname": "inventory_sync_mode",
+   "fieldtype": "Select",
+   "label": "Inventory Sync Mode",
+   "options": "Full Inventory\nChanged Bins"
+  },
+  {
    "fieldname": "warehouse",
    "fieldtype": "Link",
    "label": "Default Warehouse",
@@ -537,7 +546,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-04-10 10:00:00.000000",
+ "modified": "2026-06-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

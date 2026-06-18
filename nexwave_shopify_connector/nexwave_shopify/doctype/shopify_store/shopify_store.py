@@ -71,6 +71,7 @@ class ShopifyStore(Document):
 		enable_item_sync: DF.Check
 		enabled: DF.Check
 		inventory_sync_frequency: DF.Int
+		inventory_sync_mode: DF.Literal["Full Inventory", "Changed Bins"]
 		item_field_map: DF.Table[ShopifyStoreItemField]
 		item_filters: DF.Table[ShopifyStoreItemFilter]
 		item_group: DF.Link | None
