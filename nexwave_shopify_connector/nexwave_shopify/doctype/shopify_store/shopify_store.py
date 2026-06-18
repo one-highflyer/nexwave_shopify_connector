@@ -48,7 +48,7 @@ class ShopifyStore(Document):
 		access_token: DF.Password | None
 		add_shipping_as_item: DF.Check
 		api_version: DF.Data | None
-		auth_method: DF.Literal["Legacy (Access Token)", "OAuth"]
+		auth_method: DF.Data
 		auto_create_collections: DF.Check
 		auto_create_invoice: DF.Check
 		auto_create_payment_entry: DF.Check
@@ -71,13 +71,13 @@ class ShopifyStore(Document):
 		enable_item_sync: DF.Check
 		enabled: DF.Check
 		inventory_sync_frequency: DF.Int
-		inventory_sync_mode: DF.Literal["Full Inventory", "Changed Bins"]
+		inventory_sync_mode: DF.Data
 		item_field_map: DF.Table[ShopifyStoreItemField]
 		item_filters: DF.Table[ShopifyStoreItemFilter]
 		item_group: DF.Link | None
 		last_inventory_sync: DF.Datetime | None
 		last_order_sync: DF.Datetime | None
-		oauth_status: DF.Literal["Not Connected", "Connected"]
+		oauth_status: DF.Data
 		price_list: DF.Link | None
 		sales_invoice_series: DF.Literal[None]
 		sales_order_series: DF.Literal[None]
