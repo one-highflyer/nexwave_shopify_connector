@@ -970,35 +970,46 @@ def get_items_with_shopify_ids(
 		List of dicts with item_code, shopify_product_id, shopify_variant_id,
 		shopify_inventory_item_id
 	"""
-	item_filter = ""
 	params = {"store_name": store_name}
-	if item_codes is not None:
+	if item_codes is None:
+		query = """
+			SELECT
+				iss.parent as item_code,
+				iss.shopify_product_id,
+				iss.shopify_variant_id,
+				iss.shopify_inventory_item_id
+			FROM `tabItem Shopify Store` iss
+			JOIN `tabItem` item ON item.name = iss.parent
+			WHERE
+				iss.shopify_store = %(store_name)s
+				AND iss.enabled = 1
+				AND iss.shopify_variant_id IS NOT NULL
+				AND iss.shopify_variant_id != ''
+				AND item.disabled = 0
+		"""
+	else:
 		item_codes = sorted({item_code for item_code in item_codes if item_code})
 		if not item_codes:
 			return []
-		item_filter = "AND iss.parent IN %(item_codes)s"
 		params["item_codes"] = tuple(item_codes)
+		query = """
+			SELECT
+				iss.parent as item_code,
+				iss.shopify_product_id,
+				iss.shopify_variant_id,
+				iss.shopify_inventory_item_id
+			FROM `tabItem Shopify Store` iss
+			JOIN `tabItem` item ON item.name = iss.parent
+			WHERE
+				iss.shopify_store = %(store_name)s
+				AND iss.enabled = 1
+				AND iss.shopify_variant_id IS NOT NULL
+				AND iss.shopify_variant_id != ''
+				AND item.disabled = 0
+				AND iss.parent IN %(item_codes)s
+		"""
 
-	return frappe.db.sql(
-		f"""
-		SELECT
-			iss.parent as item_code,
-			iss.shopify_product_id,
-			iss.shopify_variant_id,
-			iss.shopify_inventory_item_id
-		FROM `tabItem Shopify Store` iss
-		JOIN `tabItem` item ON item.name = iss.parent
-		WHERE
-			iss.shopify_store = %(store_name)s
-			AND iss.enabled = 1
-			AND iss.shopify_variant_id IS NOT NULL
-			AND iss.shopify_variant_id != ''
-			AND item.disabled = 0
-			{item_filter}
-		""",
-		params,
-		as_dict=True,
-	)
+	return frappe.db.sql(query, params, as_dict=True)
 
 
 def get_stock_qty(item_code: str, warehouse: str) -> float:
