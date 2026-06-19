@@ -1,3 +1,16 @@
+# [15.1.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.0.1...v15.1.0) (2026-06-19)
+
+
+### Bug Fixes
+
+* **inventory:** use static inventory item queries ([061f9dc](https://github.com/one-highflyer/nexwave_shopify_connector/commit/061f9dceac419800cd30a026ad92b172c4b34d6b))
+* **types:** avoid generated literal annotation lint ([0237fdf](https://github.com/one-highflyer/nexwave_shopify_connector/commit/0237fdf03cce6d9eee31dd5ad6f4d732ce497c2d))
+
+
+### Features
+
+* **inventory:** add changed-bin inventory sync mode ([ec5841f](https://github.com/one-highflyer/nexwave_shopify_connector/commit/ec5841f0b3875d952818887f2761db38cfadbb45))
+
 ## [15.0.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.0.0...v15.0.1) (2026-05-05)
 
 
