@@ -23,9 +23,10 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils import now_datetime
+from frappe.utils import add_to_date, now_datetime
 
 from nexwave_shopify_connector.nexwave_shopify._inventory_test_fixtures import (
+	TEST_COMPANY,
 	TEST_WAREHOUSE,
 	ensure_item_shopify_store_row,
 	ensure_test_item,
@@ -47,11 +48,29 @@ def _noop_session(*args, **kwargs):
 
 class TestSyncStoreInventory(FrappeTestCase):
 	@classmethod
+	def _ensure_unmapped_warehouse(cls):
+		warehouse_name = "_Test Unmapped Shopify Warehouse"
+		warehouse_id = f"{warehouse_name} - _TC"
+		if frappe.db.exists("Warehouse", warehouse_id):
+			return warehouse_id
+
+		warehouse = frappe.new_doc("Warehouse")
+		warehouse.warehouse_name = warehouse_name
+		warehouse.company = TEST_COMPANY
+		if frappe.db.exists("Warehouse", "_Test Warehouse Group - _TC"):
+			warehouse.parent_warehouse = "_Test Warehouse Group - _TC"
+		warehouse.flags.ignore_mandatory = True
+		warehouse.insert(ignore_permissions=True)
+		return warehouse.name
+
+	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
 		cls.store = ensure_test_shopify_store()
 		cls.item_a = ensure_test_item("_Test Shop Item A")
 		cls.item_b = ensure_test_item("_Test Shop Item B")
+		cls.item_c = ensure_test_item("_Test Shop Item C")
+		cls.unmapped_warehouse = cls._ensure_unmapped_warehouse()
 		ensure_item_shopify_store_row(
 			cls.item_a.name,
 			cls.store.name,
@@ -68,6 +87,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 		)
 		set_bin_qty(cls.item_a.name, TEST_WAREHOUSE, 10)
 		set_bin_qty(cls.item_b.name, TEST_WAREHOUSE, 0)
+		frappe.db.delete("Bin", {"item_code": cls.item_c.name})
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture persistence
 
 	@classmethod
@@ -76,13 +96,15 @@ class TestSyncStoreInventory(FrappeTestCase):
 		# not clean them up. Delete them explicitly so reruns are idempotent
 		# and the test site is not polluted. Order matters: Bin and Stock
 		# Ledger Entry before Item; Item before Shopify Store.
-		for item_code in (cls.item_a.name, cls.item_b.name):
+		for item_code in (cls.item_a.name, cls.item_b.name, cls.item_c.name):
 			frappe.db.delete("Bin", {"item_code": item_code})
 			frappe.db.delete("Stock Ledger Entry", {"item_code": item_code})
 			if frappe.db.exists("Item", item_code):
 				frappe.delete_doc("Item", item_code, force=True, ignore_missing=True)
 		if frappe.db.exists("Shopify Store", cls.store.name):
 			frappe.delete_doc("Shopify Store", cls.store.name, force=True, ignore_missing=True)
+		if frappe.db.exists("Warehouse", cls.unmapped_warehouse):
+			frappe.delete_doc("Warehouse", cls.unmapped_warehouse, force=True, ignore_missing=True)
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture cleanup
 		super().tearDownClass()
 
@@ -90,12 +112,20 @@ class TestSyncStoreInventory(FrappeTestCase):
 		# Clear NexWave Shopify Log rows from prior tests so status
 		# assertions in this run can't be satisfied by stale logs.
 		frappe.db.delete("NexWave Shopify Log", {"shopify_store": self.store.name})
-		# Reset last_inventory_sync and cached ids so each test starts fresh
-		frappe.db.set_value("Shopify Store", self.store.name, "last_inventory_sync", None)
+		# Reset last_inventory_sync, sync mode, and cached ids so each test starts fresh
+		frappe.db.set_value(
+			"Shopify Store",
+			self.store.name,
+			{
+				"last_inventory_sync": None,
+				"inventory_sync_mode": "Full Inventory",
+			},
+			update_modified=False,
+		)
 		frappe.db.sql(
 			"""
 			UPDATE `tabItem Shopify Store`
-			SET shopify_inventory_item_id = %s
+			SET shopify_inventory_item_id = %s, last_sync_at = NULL
 			WHERE parent = %s AND shopify_store = %s
 			""",
 			("1001", self.item_a.name, self.store.name),
@@ -103,12 +133,49 @@ class TestSyncStoreInventory(FrappeTestCase):
 		frappe.db.sql(
 			"""
 			UPDATE `tabItem Shopify Store`
-			SET shopify_inventory_item_id = %s
+			SET shopify_inventory_item_id = %s, last_sync_at = NULL
 			WHERE parent = %s AND shopify_store = %s
 			""",
 			("1002", self.item_b.name, self.store.name),
 		)
+		frappe.db.delete(
+			"Item Shopify Store",
+			{"parent": self.item_c.name, "shopify_store": self.store.name},
+		)
+		set_bin_qty(self.item_a.name, TEST_WAREHOUSE, 10)
+		set_bin_qty(self.item_b.name, TEST_WAREHOUSE, 0)
+		frappe.db.delete("Bin", {"item_code": self.item_c.name})
+		frappe.db.delete("Bin", {"item_code": self.item_b.name, "warehouse": self.unmapped_warehouse})
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- ensure test isolation
+
+	def _set_last_inventory_sync(self, sync_time):
+		frappe.db.set_value(
+			"Shopify Store",
+			self.store.name,
+			"last_inventory_sync",
+			sync_time,
+			update_modified=False,
+		)
+
+	def _set_bin_modified(self, item_code, warehouse, modified_at):
+		frappe.db.sql(
+			"""
+			UPDATE `tabBin`
+			SET modified = %s
+			WHERE item_code = %s AND warehouse = %s
+			""",
+			(modified_at, item_code, warehouse),
+		)
+
+	def _set_mapping_last_sync(self, item_code, sync_time):
+		frappe.db.sql(
+			"""
+			UPDATE `tabItem Shopify Store`
+			SET last_sync_at = %s
+			WHERE parent = %s AND shopify_store = %s
+			""",
+			(sync_time, item_code, self.store.name),
+		)
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
@@ -485,6 +552,211 @@ class TestSyncStoreInventory(FrappeTestCase):
 		sync_store_inventory(self.store.name, force=True)
 
 		mock_set.assert_called_once()
+
+	# --- C3b: scheduled inventory mode routing ---
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.frappe.enqueue")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.frappe.get_all")
+	def test_scheduler_keeps_full_inventory_mode_on_full_sync_method(self, mock_get_all, mock_enqueue):
+		"""Full Inventory mode should keep queuing the existing full sync method."""
+		mock_get_all.return_value = [self.store.name]
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import (
+			INVENTORY_SYNC_METHOD_FULL,
+			update_inventory_on_shopify,
+		)
+
+		update_inventory_on_shopify()
+
+		mock_enqueue.assert_called_once()
+		self.assertEqual(mock_enqueue.call_args[0][0], INVENTORY_SYNC_METHOD_FULL)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.frappe.enqueue")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.frappe.get_all")
+	def test_scheduler_routes_changed_bins_mode(self, mock_get_all, mock_enqueue):
+		"""Changed Bins mode should queue the incremental sync method."""
+		mock_get_all.return_value = [self.store.name]
+		frappe.db.set_value(
+			"Shopify Store",
+			self.store.name,
+			"inventory_sync_mode",
+			"Changed Bins",
+			update_modified=False,
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import (
+			INVENTORY_SYNC_METHOD_CHANGED_BINS,
+			update_inventory_on_shopify,
+		)
+
+		update_inventory_on_shopify()
+
+		mock_enqueue.assert_called_once()
+		self.assertEqual(mock_enqueue.call_args[0][0], INVENTORY_SYNC_METHOD_CHANGED_BINS)
+
+	# --- C3c: changed Bin incremental sync ---
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_changed_bin_sync_sends_only_mapped_bin_changes(self, mock_set, mock_session):
+		"""Incremental sync should include changed Bins in mapped warehouses only."""
+		mock_session.temp = _noop_session
+		old_sync = add_to_date(now_datetime(), minutes=-30).replace(microsecond=0)
+		before_cursor = add_to_date(old_sync, minutes=-1)
+		changed_at = add_to_date(now_datetime(), minutes=-1)
+		self._set_last_inventory_sync(old_sync)
+		self._set_bin_modified(self.item_a.name, TEST_WAREHOUSE, changed_at)
+		self._set_bin_modified(self.item_b.name, TEST_WAREHOUSE, before_cursor)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+		mock_set.return_value = BatchResult(
+			succeeded=[self.item_a.name], failed=[], throttle=ThrottleStatus()
+		)
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+		sync_changed_bin_inventory(self.store.name, force=True)
+
+		mock_set.assert_called_once()
+		quantities = mock_set.call_args[0][0]
+		self.assertEqual({q["item_code"] for q in quantities}, {self.item_a.name})
+
+		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+		self.assertGreater(last_sync, old_sync)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_changed_bin_sync_ignores_unmapped_warehouse_changes(self, mock_set, mock_session):
+		"""Bin updates outside the store warehouse mapping should not be selected."""
+		mock_session.temp = _noop_session
+		old_sync = add_to_date(now_datetime(), minutes=-30).replace(microsecond=0)
+		before_cursor = add_to_date(old_sync, minutes=-1)
+		changed_at = add_to_date(now_datetime(), minutes=-1)
+		self._set_last_inventory_sync(old_sync)
+		self._set_bin_modified(self.item_a.name, TEST_WAREHOUSE, before_cursor)
+		self._set_bin_modified(self.item_b.name, TEST_WAREHOUSE, before_cursor)
+		set_bin_qty(self.item_b.name, self.unmapped_warehouse, 7)
+		self._set_bin_modified(self.item_b.name, self.unmapped_warehouse, changed_at)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+		sync_changed_bin_inventory(self.store.name, force=True)
+
+		mock_set.assert_not_called()
+		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+		self.assertGreater(last_sync, old_sync)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_recent_mapping_without_bin_syncs_zero_quantity(self, mock_set, mock_session):
+		"""Recently synced mappings with no Bin row should still push quantity 0."""
+		mock_session.temp = _noop_session
+		old_sync = add_to_date(now_datetime(), minutes=-30).replace(microsecond=0)
+		before_cursor = add_to_date(old_sync, minutes=-1)
+		changed_at = add_to_date(now_datetime(), minutes=-1)
+		self._set_last_inventory_sync(old_sync)
+		self._set_bin_modified(self.item_a.name, TEST_WAREHOUSE, before_cursor)
+		self._set_bin_modified(self.item_b.name, TEST_WAREHOUSE, before_cursor)
+		ensure_item_shopify_store_row(
+			self.item_c.name,
+			self.store.name,
+			shopify_product_id="102",
+			shopify_variant_id="202",
+			shopify_inventory_item_id="1003",
+		)
+		frappe.db.delete("Bin", {"item_code": self.item_c.name})
+		self._set_mapping_last_sync(self.item_c.name, changed_at)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+		mock_set.return_value = BatchResult(
+			succeeded=[self.item_c.name], failed=[], throttle=ThrottleStatus()
+		)
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+		sync_changed_bin_inventory(self.store.name, force=True)
+
+		mock_set.assert_called_once()
+		quantities = mock_set.call_args[0][0]
+		self.assertEqual(len(quantities), 1)
+		self.assertEqual(quantities[0]["item_code"], self.item_c.name)
+		self.assertEqual(quantities[0]["qty"], 0)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_changed_bin_noop_advances_cursor(self, mock_set, mock_session):
+		"""A no-change incremental scan should advance last_inventory_sync."""
+		mock_session.temp = _noop_session
+		old_sync = add_to_date(now_datetime(), minutes=-30).replace(microsecond=0)
+		cursor = add_to_date(now_datetime(), minutes=-1).replace(microsecond=0)
+		self._set_last_inventory_sync(cursor)
+		self._set_bin_modified(self.item_a.name, TEST_WAREHOUSE, old_sync)
+		self._set_bin_modified(self.item_b.name, TEST_WAREHOUSE, old_sync)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+		sync_changed_bin_inventory(self.store.name, force=True)
+
+		mock_set.assert_not_called()
+		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+		self.assertGreater(last_sync, cursor)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_changed_bin_errors_do_not_advance_cursor(self, mock_set, mock_session):
+		"""Incremental item errors should leave the cursor unchanged for retry."""
+		mock_session.temp = _noop_session
+		old_sync = add_to_date(now_datetime(), minutes=-30).replace(microsecond=0)
+		changed_at = add_to_date(now_datetime(), minutes=-1)
+		self._set_last_inventory_sync(old_sync)
+		self._set_bin_modified(self.item_a.name, TEST_WAREHOUSE, changed_at)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+		mock_set.return_value = BatchResult(
+			succeeded=[],
+			failed=[(self.item_a.name, "Inventory item not found")],
+			throttle=ThrottleStatus(),
+		)
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+		sync_changed_bin_inventory(self.store.name, force=True)
+
+		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+		self.assertEqual(last_sync, old_sync)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory")
+	def test_changed_bin_empty_cursor_runs_full_baseline(self, mock_full_sync):
+		"""An empty incremental cursor should run a forced full sync baseline."""
+		from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+		sync_changed_bin_inventory(self.store.name, force=True)
+
+		mock_full_sync.assert_called_once_with(self.store.name, force=True)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.frappe.msgprint")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.frappe.enqueue")
+	def test_manual_inventory_sync_always_queues_full_sync(self, mock_enqueue, mock_msgprint):
+		"""Manual inventory sync should stay a forced full sync in every mode."""
+		frappe.db.set_value(
+			"Shopify Store",
+			self.store.name,
+			"inventory_sync_mode",
+			"Changed Bins",
+			update_modified=False,
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import (
+			INVENTORY_SYNC_METHOD_FULL,
+			manual_inventory_sync,
+		)
+
+		manual_inventory_sync(self.store.name)
+
+		mock_enqueue.assert_called_once()
+		self.assertEqual(mock_enqueue.call_args[0][0], INVENTORY_SYNC_METHOD_FULL)
+		self.assertTrue(mock_enqueue.call_args.kwargs["force"])
 
 	# --- C4: store-level exception path ---
 
