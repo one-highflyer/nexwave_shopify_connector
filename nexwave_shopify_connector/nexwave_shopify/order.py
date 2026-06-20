@@ -818,7 +818,7 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None, str | None, str
 			)
 
 			if linked_customers:
-				linked_customer_names = [c.link_name for c in linked_customers]
+				linked_customer_names = list(dict.fromkeys(c.link_name for c in linked_customers))
 				enabled_customers = frappe.get_all(
 					"Customer",
 					filters={"name": ["in", linked_customer_names], "disabled": 0},

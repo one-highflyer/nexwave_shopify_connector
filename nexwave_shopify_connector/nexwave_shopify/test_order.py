@@ -222,6 +222,22 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 
 
 class TestSyncCustomerMatching(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		self.created_contacts = []
+		self.created_customers = []
+
+	def tearDown(self):
+		for contact_name in reversed(self.created_contacts):
+			if frappe.db.exists("Contact", contact_name):
+				frappe.delete_doc("Contact", contact_name, force=1, ignore_permissions=True)
+
+		for customer_name in reversed(self.created_customers):
+			if frappe.db.exists("Customer", customer_name):
+				frappe.delete_doc("Customer", customer_name, force=1, ignore_permissions=True)
+
+		super().tearDown()
+
 	def make_customer(self, customer_name, disabled=0):
 		customer = frappe.get_doc(
 			{
@@ -233,17 +249,21 @@ class TestSyncCustomerMatching(FrappeTestCase):
 			}
 		)
 		customer.insert(ignore_permissions=True)
+		self.created_customers.append(customer.name)
 		return customer
 
 	def make_contact(self, customer, email):
-		frappe.get_doc(
+		contact = frappe.get_doc(
 			{
 				"doctype": "Contact",
 				"first_name": customer.customer_name.split()[0],
 				"email_ids": [{"email_id": email, "is_primary": 1}],
 				"links": [{"link_doctype": "Customer", "link_name": customer.name}],
 			}
-		).insert(ignore_permissions=True)
+		)
+		contact.insert(ignore_permissions=True)
+		self.created_contacts.append(contact.name)
+		return contact
 
 	def make_order(self, email, customer_id):
 		return {
