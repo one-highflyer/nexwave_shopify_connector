@@ -1,3 +1,11 @@
+## [15.1.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.0...v15.1.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **order:** deduplicate Shopify email customer matches ([02f95a2](https://github.com/one-highflyer/nexwave_shopify_connector/commit/02f95a237182252bd1f46e2ba04fa132078d6563))
+* **order:** ignore disabled customers in Shopify email matching ([7675962](https://github.com/one-highflyer/nexwave_shopify_connector/commit/7675962acde97a4ed8cb23e456162643d7a4db1f))
+
 # [15.1.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.0.1...v15.1.0) (2026-06-19)
 
 
