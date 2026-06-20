@@ -5,7 +5,11 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import flt
 
-from nexwave_shopify_connector.nexwave_shopify.order import _create_or_update_address, _get_item_price
+from nexwave_shopify_connector.nexwave_shopify.order import (
+	_create_or_update_address,
+	_get_item_price,
+	_sync_customer,
+)
 from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
 
 
@@ -215,6 +219,73 @@ class TestSanitizePhoneNumber(FrappeTestCase):
 		sanitized, original = sanitize_phone_number("(09) 836 7700")
 		self.assertEqual(sanitized, "(09) 836 7700")
 		self.assertIsNone(original)
+
+
+class TestSyncCustomerMatching(FrappeTestCase):
+	def make_customer(self, customer_name, disabled=0):
+		customer = frappe.get_doc(
+			{
+				"doctype": "Customer",
+				"customer_name": customer_name,
+				"customer_group": _ensure_leaf_customer_group(),
+				"territory": frappe.db.get_single_value("Selling Settings", "territory"),
+				"disabled": disabled,
+			}
+		)
+		customer.insert(ignore_permissions=True)
+		return customer
+
+	def make_contact(self, customer, email):
+		frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": customer.customer_name.split()[0],
+				"email_ids": [{"email_id": email, "is_primary": 1}],
+				"links": [{"link_doctype": "Customer", "link_name": customer.name}],
+			}
+		).insert(ignore_permissions=True)
+
+	def make_order(self, email, customer_id):
+		return {
+			"id": f"order-{customer_id}",
+			"name": f"#T{customer_id}",
+			"email": email,
+			"customer": {
+				"id": customer_id,
+				"email": email,
+				"first_name": "_Test",
+				"last_name": "Buyer",
+			},
+			"billing_address": {},
+			"shipping_address": {},
+		}
+
+	def test_contact_email_match_ignores_disabled_customers(self):
+		email = "_test_active_match@example.test"
+		disabled_customer = self.make_customer("_Test Disabled Contact Match", disabled=1)
+		enabled_customer = self.make_customer("_Test Enabled Contact Match")
+		for customer in (disabled_customer, enabled_customer):
+			self.make_contact(customer, email)
+
+		customer_name, contact_name, billing_addr, shipping_addr = _sync_customer(
+			self.make_order(email, "9001"), frappe._dict({})
+		)
+
+		self.assertEqual(customer_name, enabled_customer.name)
+		self.assertTrue(contact_name)
+		self.assertIsNone(billing_addr)
+		self.assertIsNone(shipping_addr)
+		self.assertEqual(
+			frappe.db.get_value("Customer", enabled_customer.name, "shopify_customer_id"), "9001"
+		)
+
+	def test_contact_email_match_blocks_disabled_only_customers(self):
+		email = "_test_disabled_only@example.test"
+		disabled_customer = self.make_customer("_Test Disabled Only Contact Match", disabled=1)
+		self.make_contact(disabled_customer, email)
+
+		with self.assertRaises(frappe.ValidationError):
+			_sync_customer(self.make_order(email, "9002"), frappe._dict({}))
 
 
 class TestCreateOrUpdateAddress(FrappeTestCase):

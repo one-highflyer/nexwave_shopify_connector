@@ -817,6 +817,27 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None, str | None, str
 				fields=["link_name"],
 			)
 
+			if linked_customers:
+				linked_customer_names = [c.link_name for c in linked_customers]
+				enabled_customers = frappe.get_all(
+					"Customer",
+					filters={"name": ["in", linked_customer_names], "disabled": 0},
+					pluck="name",
+				)
+				enabled_customer_names = set(enabled_customers)
+				linked_customers = [
+					frappe._dict(link_name=customer_name)
+					for customer_name in linked_customer_names
+					if customer_name in enabled_customer_names
+				]
+				if not linked_customers:
+					frappe.throw(
+						_(
+							"Shopify customer email is linked only to disabled Customer records. "
+							"Re-enable the correct Customer or update the Contact mapping before syncing."
+						)
+					)
+
 			if len(linked_customers) == 1:
 				# Exact match - use customer and set shopify_customer_id
 				customer_name = linked_customers[0].link_name
