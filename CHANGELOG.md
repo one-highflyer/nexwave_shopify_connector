@@ -1,3 +1,10 @@
+## [15.1.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.1...v15.1.2) (2026-06-21)
+
+
+### Bug Fixes
+
+* **order:** show disabled customer matches in Shopify error ([155ef6c](https://github.com/one-highflyer/nexwave_shopify_connector/commit/155ef6cfc53a215858a1ae15f284048702adfa25))
+
 ## [15.1.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.0...v15.1.1) (2026-06-20)
 
 
