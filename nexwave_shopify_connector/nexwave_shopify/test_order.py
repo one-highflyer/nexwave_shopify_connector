@@ -304,8 +304,10 @@ class TestSyncCustomerMatching(FrappeTestCase):
 		disabled_customer = self.make_customer("_Test Disabled Only Contact Match", disabled=1)
 		self.make_contact(disabled_customer, email)
 
-		with self.assertRaises(frappe.ValidationError):
+		with self.assertRaises(frappe.ValidationError) as context:
 			_sync_customer(self.make_order(email, "9002"), frappe._dict({}))
+
+		self.assertIn(disabled_customer.name, str(context.exception))
 
 
 class TestCreateOrUpdateAddress(FrappeTestCase):
