@@ -49,6 +49,7 @@
   "section_break_inventory",
   "enable_inventory_sync",
   "inventory_sync_mode",
+  "reserve_stock_for_draft_orders",
   "warehouse",
   "inventory_sync_frequency",
   "column_break_inventory",
@@ -356,6 +357,13 @@
    "fieldtype": "Select",
    "label": "Inventory Sync Mode",
    "options": "Full Inventory\nChanged Bins"
+  },
+  {
+   "default": "0",
+   "description": "Create Stock Reservation Entries for imported Shopify draft orders and subtract active draft Sales Order reservations from inventory pushed to this store.",
+   "fieldname": "reserve_stock_for_draft_orders",
+   "fieldtype": "Check",
+   "label": "Reserve Stock for Draft Orders"
   },
   {
    "fieldname": "warehouse",
