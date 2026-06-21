@@ -831,11 +831,16 @@ def _sync_customer(order: dict, store) -> tuple[str, str | None, str | None, str
 					if customer_name in enabled_customer_names
 				]
 				if not linked_customers:
+					disabled_customer_names = [
+						customer_name
+						for customer_name in linked_customer_names
+						if customer_name not in enabled_customer_names
+					]
 					frappe.throw(
 						_(
-							"Shopify customer email is linked only to disabled Customer records. "
+							"Shopify customer email is linked only to disabled Customer records: {0}. "
 							"Re-enable the correct Customer or update the Contact mapping before syncing."
-						)
+						).format(", ".join(disabled_customer_names))
 					)
 
 			if len(linked_customers) == 1:
