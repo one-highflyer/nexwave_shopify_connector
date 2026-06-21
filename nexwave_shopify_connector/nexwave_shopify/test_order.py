@@ -14,12 +14,12 @@ from nexwave_shopify_connector.nexwave_shopify._inventory_test_fixtures import (
 )
 from nexwave_shopify_connector.nexwave_shopify.inventory import _bulk_get_stock_qty, get_stock_qty
 from nexwave_shopify_connector.nexwave_shopify.order import (
-	_cancel_stock_reservations_for_shopify_order,
 	_create_or_update_address,
 	_create_sales_order,
 	_get_item_price,
 	_reserve_stock_for_draft_shopify_order,
 	_sync_customer,
+	cancel_order,
 )
 from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
 
@@ -320,9 +320,45 @@ class TestSyncCustomerMatching(FrappeTestCase):
 
 
 class TestDraftShopifyOrderStockReservation(FrappeTestCase):
+	def cleanup_doc(self, doctype, name):
+		if not frappe.db.exists(doctype, name):
+			return
+
+		doc = frappe.get_doc(doctype, name)
+		if doctype == "Sales Order":
+			self.cancel_sales_order_reservations(doc)
+
+		if getattr(doc, "docstatus", 0) == 1:
+			doc.cancel()
+
+		frappe.delete_doc(doctype, name, ignore_permissions=True, force=True)
+
+	def cancel_sales_order_reservations(self, sales_order):
+		reservations = frappe.get_all(
+			"Stock Reservation Entry",
+			filters={
+				"voucher_type": "Sales Order",
+				"voucher_no": sales_order.name,
+				"docstatus": 1,
+				"status": ["not in", ["Delivered", "Cancelled"]],
+			},
+			pluck="name",
+		)
+		if reservations:
+			sales_order.cancel_stock_reservation_entries(sre_list=reservations, notify=False)
+
+	def register_doc_cleanup(self, doc):
+		self.addCleanup(self.cleanup_doc, doc.doctype, doc.name)
+		return doc
+
+	def cleanup_shopify_logs(self, shopify_store):
+		frappe.db.delete("NexWave Shopify Log", {"shopify_store": shopify_store})
+
 	def make_customer(self, customer_name):
 		if frappe.db.exists("Customer", customer_name):
-			return frappe.get_doc("Customer", customer_name)
+			customer = frappe.get_doc("Customer", customer_name)
+			self.register_doc_cleanup(customer)
+			return customer
 
 		customer = frappe.get_doc(
 			{
@@ -333,10 +369,11 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 			}
 		)
 		customer.insert(ignore_permissions=True)
+		self.register_doc_cleanup(customer)
 		return customer
 
 	def make_store(self):
-		return ensure_test_shopify_store(
+		store = ensure_test_shopify_store(
 			shop_domain="_test-draft-reservation.myshopify.com",
 			warehouse=_get_default_warehouse(),
 			price_list="_Test Price List",
@@ -344,6 +381,8 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 			auto_submit_sales_order=0,
 			auto_create_invoice=0,
 		)
+		self.addCleanup(self.cleanup_shopify_logs, store.name)
+		return store
 
 	def get_cost_center(self):
 		return frappe.db.get_value(
@@ -391,7 +430,7 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 	def prepare_stock_item(self, item_code, actual_qty=5):
 		warehouse = _get_default_warehouse()
 		ensure_test_item(item_code, is_stock_item=1)
-		make_stock_entry(
+		stock_entry = make_stock_entry(
 			item_code=item_code,
 			target=warehouse,
 			qty=actual_qty,
@@ -399,6 +438,7 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 			expense_account=self.get_difference_account(),
 			cost_center=self.get_cost_center(),
 		)
+		self.register_doc_cleanup(stock_entry)
 		frappe.db.set_value(
 			"Bin",
 			{"item_code": item_code, "warehouse": warehouse},
@@ -444,6 +484,7 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 			store,
 			customer.name,
 		)
+		self.register_doc_cleanup(so)
 
 		reservations = self.get_active_reservations(so)
 		self.assertEqual(so.docstatus, 0)
@@ -467,6 +508,7 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 			store,
 			customer.name,
 		)
+		self.register_doc_cleanup(so)
 		_reserve_stock_for_draft_shopify_order(so)
 		self.assertEqual(len(self.get_active_reservations(so)), 1)
 
@@ -480,17 +522,22 @@ class TestDraftShopifyOrderStockReservation(FrappeTestCase):
 		warehouse = self.prepare_stock_item(item_code)
 		store = self.make_store()
 		customer = self.make_customer("_Test Draft Reservation Customer 3")
+		order = self.make_order_payload("draft-reserve-3", item_code, qty=2)
 
 		so = _create_sales_order(
-			self.make_order_payload("draft-reserve-3", item_code, qty=2),
+			order,
 			store,
 			customer.name,
 		)
+		self.register_doc_cleanup(so)
 		self.assertEqual(len(self.get_active_reservations(so)), 1)
 
-		cancelled_count = _cancel_stock_reservations_for_shopify_order(so)
+		cancel_order(
+			{**order, "financial_status": "voided", "cancel_reason": "customer"}, shopify_store=store.name
+		)
+		so.reload()
 
-		self.assertEqual(cancelled_count, 1)
+		self.assertEqual(so.shopify_financial_status, "voided")
 		self.assertEqual(len(self.get_active_reservations(so)), 0)
 		self.assertEqual(self.get_bin_reserved_qty(item_code, warehouse), 0)
 		self.assert_shopify_available_qty(item_code, warehouse, 5)
