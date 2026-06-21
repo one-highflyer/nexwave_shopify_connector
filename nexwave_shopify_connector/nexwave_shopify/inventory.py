@@ -714,9 +714,10 @@ def _execute_batch_with_retry(
 def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], float]:
 	"""Read available-for-sale quantity from tabBin for many (item_code, warehouse) pairs.
 
-	Available quantity is calculated as actual_qty minus reserved_qty, clamped
-	to a minimum of 0. Returns a dict keyed by (item_code, warehouse). Missing
-	pairs are absent; callers should default to 0.
+	Available quantity is calculated as actual_qty minus submitted Sales Order
+	reserved_qty minus draft Sales Order stock reservations, clamped to a
+	minimum of 0. Returns a dict keyed by (item_code, warehouse). Missing pairs
+	are absent; callers should default to 0.
 	"""
 	if not pairs:
 		return {}
@@ -740,16 +741,52 @@ def _bulk_get_stock_qty(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], f
 		as_dict=True,
 	)
 
-	# Use actual_qty - reserved_qty to get the available-for-sale quantity.
-	# reserved_qty covers all submitted Sales Order commitments pending delivery
-	# (including those with Stock Reservation Entries, which are a subset).
+	draft_reserved_qty = _bulk_get_draft_reserved_stock_qty(item_codes, warehouses)
+
+	# Use actual_qty - reserved_qty - draft reservations to get the
+	# available-for-sale quantity. reserved_qty covers submitted Sales Order
+	# commitments pending delivery. Draft Sales Orders are not included there,
+	# but Stock Reservation Entries against draft orders represent confirmed
+	# Shopify demand that must also be excluded.
 	# Future: this could be made configurable per Shopify Store with options
 	# such as Actual Qty, Actual minus Reserved, or Projected Qty.
 	result: dict[tuple[str, str], float] = {}
 	for row in rows:
-		available = flt(row["actual_qty"]) - flt(row["reserved_qty"])
-		result[(row["item_code"], row["warehouse"])] = max(available, 0)
+		key = (row["item_code"], row["warehouse"])
+		available = flt(row["actual_qty"]) - flt(row["reserved_qty"]) - flt(draft_reserved_qty.get(key, 0))
+		result[key] = max(available, 0)
 	return result
+
+
+def _bulk_get_draft_reserved_stock_qty(
+	item_codes: list[str], warehouses: list[str]
+) -> dict[tuple[str, str], float]:
+	if not item_codes or not warehouses:
+		return {}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			sre.item_code,
+			sre.warehouse,
+			SUM(sre.reserved_qty - sre.delivered_qty) AS reserved_qty
+		FROM `tabStock Reservation Entry` sre
+		INNER JOIN `tabSales Order` so
+			ON so.name = sre.voucher_no
+		WHERE sre.docstatus = 1
+		  AND sre.voucher_type = 'Sales Order'
+		  AND sre.item_code IN %(item_codes)s
+		  AND sre.warehouse IN %(warehouses)s
+		  AND sre.status NOT IN ('Delivered', 'Cancelled')
+		  AND sre.reserved_qty > sre.delivered_qty
+		  AND so.docstatus = 0
+		GROUP BY sre.item_code, sre.warehouse
+		""",
+		{"item_codes": tuple(item_codes), "warehouses": tuple(warehouses)},
+		as_dict=True,
+	)
+
+	return {(row["item_code"], row["warehouse"]): flt(row["reserved_qty"]) for row in rows}
 
 
 def _resolve_inventory_item_ids(
@@ -1016,9 +1053,8 @@ def get_stock_qty(item_code: str, warehouse: str) -> float:
 	"""
 	Get available-for-sale stock quantity from ERPNext Bin.
 
-	Available quantity is actual_qty minus reserved_qty, clamped to a minimum
-	of 0. This excludes stock committed to submitted Sales Orders pending
-	delivery.
+	Available quantity is actual_qty minus submitted Sales Order reserved_qty
+	minus draft Sales Order stock reservations, clamped to a minimum of 0.
 
 	Args:
 		item_code: Item code
@@ -1027,7 +1063,7 @@ def get_stock_qty(item_code: str, warehouse: str) -> float:
 	Returns:
 		Available quantity (0 if no bin exists or stock is fully reserved)
 	"""
-	# Use actual_qty - reserved_qty to match the bulk path (_bulk_get_stock_qty).
+	# Match the bulk path (_bulk_get_stock_qty).
 	# Future: this could be made configurable per Shopify Store.
 	bin_data = frappe.db.get_value(
 		"Bin",
@@ -1037,8 +1073,33 @@ def get_stock_qty(item_code: str, warehouse: str) -> float:
 	)
 	if not bin_data:
 		return 0
-	available = flt(bin_data.actual_qty) - flt(bin_data.reserved_qty)
+	available = (
+		flt(bin_data.actual_qty)
+		- flt(bin_data.reserved_qty)
+		- flt(_get_draft_reserved_stock_qty(item_code, warehouse))
+	)
 	return max(available, 0)
+
+
+def _get_draft_reserved_stock_qty(item_code: str, warehouse: str) -> float:
+	return flt(
+		frappe.db.sql(
+			"""
+			SELECT SUM(sre.reserved_qty - sre.delivered_qty)
+			FROM `tabStock Reservation Entry` sre
+			INNER JOIN `tabSales Order` so
+				ON so.name = sre.voucher_no
+			WHERE sre.docstatus = 1
+			  AND sre.voucher_type = 'Sales Order'
+			  AND sre.item_code = %(item_code)s
+			  AND sre.warehouse = %(warehouse)s
+			  AND sre.status NOT IN ('Delivered', 'Cancelled')
+			  AND sre.reserved_qty > sre.delivered_qty
+			  AND so.docstatus = 0
+			""",
+			{"item_code": item_code, "warehouse": warehouse},
+		)[0][0]
+	)
 
 
 def sync_single_item_inventory(item_code: str, store_name: str | None = None):

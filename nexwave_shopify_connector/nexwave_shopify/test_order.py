@@ -2,12 +2,23 @@
 # See license.txt
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
-from frappe.utils import flt
+from erpnext.stock.doctype.stock_entry.stock_entry_utils import make_stock_entry
+from frappe.tests.utils import FrappeTestCase, change_settings
+from frappe.utils import flt, nowdate
 
+from nexwave_shopify_connector.nexwave_shopify._inventory_test_fixtures import (
+	TEST_COMPANY,
+	_get_default_warehouse,
+	ensure_test_item,
+	ensure_test_shopify_store,
+)
+from nexwave_shopify_connector.nexwave_shopify.inventory import _bulk_get_stock_qty, get_stock_qty
 from nexwave_shopify_connector.nexwave_shopify.order import (
+	_cancel_stock_reservations_for_shopify_order,
 	_create_or_update_address,
+	_create_sales_order,
 	_get_item_price,
+	_reserve_stock_for_draft_shopify_order,
 	_sync_customer,
 )
 from nexwave_shopify_connector.nexwave_shopify.utils import sanitize_phone_number
@@ -306,6 +317,183 @@ class TestSyncCustomerMatching(FrappeTestCase):
 
 		with self.assertRaises(frappe.ValidationError):
 			_sync_customer(self.make_order(email, "9002"), frappe._dict({}))
+
+
+class TestDraftShopifyOrderStockReservation(FrappeTestCase):
+	def make_customer(self, customer_name):
+		if frappe.db.exists("Customer", customer_name):
+			return frappe.get_doc("Customer", customer_name)
+
+		customer = frappe.get_doc(
+			{
+				"doctype": "Customer",
+				"customer_name": customer_name,
+				"customer_group": _ensure_leaf_customer_group(),
+				"territory": frappe.db.get_single_value("Selling Settings", "territory"),
+			}
+		)
+		customer.insert(ignore_permissions=True)
+		return customer
+
+	def make_store(self):
+		return ensure_test_shopify_store(
+			shop_domain="_test-draft-reservation.myshopify.com",
+			warehouse=_get_default_warehouse(),
+			price_list="_Test Price List",
+			cost_center=self.get_cost_center(),
+			auto_submit_sales_order=0,
+			auto_create_invoice=0,
+		)
+
+	def get_cost_center(self):
+		return frappe.db.get_value(
+			"Cost Center",
+			{"company": TEST_COMPANY, "is_group": 0},
+			"name",
+		)
+
+	def get_difference_account(self):
+		return (
+			frappe.db.get_value("Account", "Stock Adjustment - _TC", "name")
+			or frappe.db.get_value(
+				"Account",
+				{"company": TEST_COMPANY, "is_group": 0, "root_type": "Expense"},
+				"name",
+			)
+			or frappe.db.get_value("Account", {"company": TEST_COMPANY, "is_group": 0}, "name")
+		)
+
+	def make_order_payload(self, order_id, item_code, qty=2, price=10):
+		return {
+			"id": order_id,
+			"name": f"#{order_id}",
+			"financial_status": "pending",
+			"fulfillment_status": None,
+			"note": None,
+			"currency": frappe.db.get_value("Company", TEST_COMPANY, "default_currency") or "NZD",
+			"created_at": nowdate(),
+			"taxes_included": False,
+			"total_price": flt(qty * price),
+			"line_items": [
+				{
+					"sku": item_code,
+					"title": item_code,
+					"name": item_code,
+					"quantity": qty,
+					"price": price,
+					"discount_allocations": [],
+					"tax_lines": [],
+				}
+			],
+			"shipping_lines": [],
+		}
+
+	def prepare_stock_item(self, item_code, actual_qty=5):
+		warehouse = _get_default_warehouse()
+		ensure_test_item(item_code, is_stock_item=1)
+		make_stock_entry(
+			item_code=item_code,
+			target=warehouse,
+			qty=actual_qty,
+			basic_rate=100,
+			expense_account=self.get_difference_account(),
+			cost_center=self.get_cost_center(),
+		)
+		frappe.db.set_value(
+			"Bin",
+			{"item_code": item_code, "warehouse": warehouse},
+			"reserved_qty",
+			0,
+			update_modified=False,
+		)
+		return warehouse
+
+	def get_active_reservations(self, sales_order):
+		return frappe.get_all(
+			"Stock Reservation Entry",
+			filters={
+				"voucher_type": "Sales Order",
+				"voucher_no": sales_order.name,
+				"docstatus": 1,
+			},
+			fields=["name", "reserved_qty", "voucher_detail_no"],
+			order_by="creation asc",
+		)
+
+	def get_bin_reserved_qty(self, item_code, warehouse):
+		return flt(
+			frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "reserved_qty")
+		)
+
+	def assert_shopify_available_qty(self, item_code, warehouse, expected_qty):
+		self.assertEqual(get_stock_qty(item_code, warehouse), expected_qty)
+		self.assertEqual(
+			_bulk_get_stock_qty([(item_code, warehouse)])[(item_code, warehouse)],
+			expected_qty,
+		)
+
+	@change_settings("Stock Settings", {"enable_stock_reservation": 1, "allow_partial_reservation": 1})
+	def test_draft_shopify_order_creates_stock_reservation(self):
+		item_code = "_Test Shopify Draft Reserve Item 1"
+		warehouse = self.prepare_stock_item(item_code)
+		store = self.make_store()
+		customer = self.make_customer("_Test Draft Reservation Customer 1")
+
+		so = _create_sales_order(
+			self.make_order_payload("draft-reserve-1", item_code, qty=2),
+			store,
+			customer.name,
+		)
+
+		reservations = self.get_active_reservations(so)
+		self.assertEqual(so.docstatus, 0)
+		self.assertEqual(so.reserve_stock, 1)
+		self.assertEqual(so.items[0].reserve_stock, 1)
+		self.assertEqual(len(reservations), 1)
+		self.assertEqual(flt(reservations[0].reserved_qty), 2)
+		self.assertEqual(flt(so.items[0].stock_reserved_qty), 2)
+		self.assertEqual(self.get_bin_reserved_qty(item_code, warehouse), 0)
+		self.assert_shopify_available_qty(item_code, warehouse, 3)
+
+	@change_settings("Stock Settings", {"enable_stock_reservation": 1, "allow_partial_reservation": 1})
+	def test_draft_reservation_is_not_duplicated_on_submit(self):
+		item_code = "_Test Shopify Draft Reserve Item 2"
+		self.prepare_stock_item(item_code)
+		store = self.make_store()
+		customer = self.make_customer("_Test Draft Reservation Customer 2")
+
+		so = _create_sales_order(
+			self.make_order_payload("draft-reserve-2", item_code, qty=2),
+			store,
+			customer.name,
+		)
+		_reserve_stock_for_draft_shopify_order(so)
+		self.assertEqual(len(self.get_active_reservations(so)), 1)
+
+		so.submit()
+		self.assertEqual(len(self.get_active_reservations(so)), 1)
+		self.assertEqual(flt(so.items[0].stock_reserved_qty), 2)
+
+	@change_settings("Stock Settings", {"enable_stock_reservation": 1, "allow_partial_reservation": 1})
+	def test_draft_reservation_can_be_released_on_cancellation(self):
+		item_code = "_Test Shopify Draft Reserve Item 3"
+		warehouse = self.prepare_stock_item(item_code)
+		store = self.make_store()
+		customer = self.make_customer("_Test Draft Reservation Customer 3")
+
+		so = _create_sales_order(
+			self.make_order_payload("draft-reserve-3", item_code, qty=2),
+			store,
+			customer.name,
+		)
+		self.assertEqual(len(self.get_active_reservations(so)), 1)
+
+		cancelled_count = _cancel_stock_reservations_for_shopify_order(so)
+
+		self.assertEqual(cancelled_count, 1)
+		self.assertEqual(len(self.get_active_reservations(so)), 0)
+		self.assertEqual(self.get_bin_reserved_qty(item_code, warehouse), 0)
+		self.assert_shopify_available_qty(item_code, warehouse, 5)
 
 
 class TestCreateOrUpdateAddress(FrappeTestCase):

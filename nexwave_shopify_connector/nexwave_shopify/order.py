@@ -500,9 +500,13 @@ def cancel_order(payload: dict, request_id: str | None = None, shopify_store: st
 			so.cancel()
 			logger.info("[orders/cancelled] Cancelled Sales Order %s", so.name)
 		elif so.docstatus == 0:
-			# Draft - just delete or update status
+			cancelled_reservations = _cancel_stock_reservations_for_shopify_order(so)
 			frappe.db.set_value("Sales Order", so.name, "shopify_financial_status", "voided")
-			logger.info("[orders/cancelled] Marked draft SO %s as voided", so.name)
+			logger.info(
+				"[orders/cancelled] Marked draft SO %s as voided and cancelled %s stock reservations",
+				so.name,
+				cancelled_reservations,
+			)
 		else:
 			# Has linked docs - just update status
 			frappe.db.set_value("Sales Order", so.name, "shopify_financial_status", order_status)
@@ -1268,8 +1272,10 @@ def _create_sales_order(
 	Returns:
 		Sales Order document
 	"""
+	stock_reservation_enabled = _is_stock_reservation_enabled()
+
 	# Get line items
-	items = _get_order_items(order, store)
+	items = _get_order_items(order, store, reserve_stock=stock_reservation_enabled)
 
 	# Get taxes
 	taxes = _get_order_taxes(order, store, items)
@@ -1294,6 +1300,7 @@ def _create_sales_order(
 			"delivery_date": getdate(order.get("created_at")) or nowdate(),
 			"company": store.company,
 			"cost_center": store.cost_center,
+			"reserve_stock": cint(stock_reservation_enabled),
 			"selling_price_list": frappe.db.get_value("Customer", customer_name, "default_price_list")
 			or store.price_list,
 			"ignore_pricing_rule": 1,
@@ -1308,10 +1315,13 @@ def _create_sales_order(
 	# Apply rounding adjustment to match Shopify total
 	apply_rounding_adjustment(so, order, store=store)
 
+	if _should_reserve_draft_shopify_order(order, store):
+		_reserve_stock_for_draft_shopify_order(so)
+
 	return so
 
 
-def _get_order_items(order: dict, store) -> list:
+def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 	"""
 	Map Shopify line items to Sales Order items.
 
@@ -1320,6 +1330,7 @@ def _get_order_items(order: dict, store) -> list:
 	Args:
 		order: Shopify order data
 		store: Shopify Store document
+		reserve_stock: Whether imported order items should reserve stock
 
 	Returns:
 		List of item dicts for Sales Order
@@ -1369,10 +1380,93 @@ def _get_order_items(order: dict, store) -> list:
 				"warehouse": store.warehouse,
 				"cost_center": store.cost_center,
 				"shopify_item_discount": per_item_discount,
+				"reserve_stock": cint(reserve_stock),
 			}
 		)
 
 	return items
+
+
+def _is_stock_reservation_enabled() -> bool:
+	return bool(cint(frappe.db.get_single_value("Stock Settings", "enable_stock_reservation")))
+
+
+def _should_reserve_draft_shopify_order(order: dict, store) -> bool:
+	if not _is_stock_reservation_enabled():
+		return False
+
+	return not (order.get("financial_status") == "paid" and cint(store.auto_submit_sales_order))
+
+
+def _reserve_stock_for_draft_shopify_order(so) -> int:
+	logger = get_logger()
+
+	if so.docstatus != 0:
+		return 0
+
+	if not _is_stock_reservation_enabled():
+		logger.info("Stock reservation is disabled; skipping draft reservation for SO %s", so.name)
+		return 0
+
+	changed = False
+	if not so.reserve_stock:
+		so.reserve_stock = 1
+		changed = True
+
+	for item in so.items:
+		if cint(item.is_stock_item) and item.warehouse and not item.reserve_stock:
+			item.reserve_stock = 1
+			changed = True
+
+	if changed:
+		so.save(ignore_permissions=True)
+
+	existing_before = _get_active_stock_reservation_count(so.name)
+	so.create_stock_reservation_entries(notify=False)
+	so.reload()
+	existing_after = _get_active_stock_reservation_count(so.name)
+
+	logger.info(
+		"Draft Shopify SO %s stock reservation complete: %s active reservations, %s created",
+		so.name,
+		existing_after,
+		max(existing_after - existing_before, 0),
+	)
+	return existing_after
+
+
+def _cancel_stock_reservations_for_shopify_order(so) -> int:
+	active_reservations = frappe.get_all(
+		"Stock Reservation Entry",
+		filters={
+			"voucher_type": so.doctype,
+			"voucher_no": so.name,
+			"docstatus": 1,
+			"status": ["not in", ["Delivered", "Cancelled"]],
+		},
+		pluck="name",
+	)
+
+	if not active_reservations:
+		return 0
+
+	so.cancel_stock_reservation_entries(sre_list=active_reservations, notify=False)
+	return len(active_reservations)
+
+
+def _get_active_stock_reservation_count(sales_order_name: str) -> int:
+	return len(
+		frappe.get_all(
+			"Stock Reservation Entry",
+			filters={
+				"voucher_type": "Sales Order",
+				"voucher_no": sales_order_name,
+				"docstatus": 1,
+				"status": ["not in", ["Delivered", "Cancelled"]],
+			},
+			pluck="name",
+		)
+	)
 
 
 def _get_item_price(line_item: dict, taxes_inclusive: bool) -> float:
