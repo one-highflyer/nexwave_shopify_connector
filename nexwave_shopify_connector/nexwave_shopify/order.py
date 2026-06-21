@@ -1395,6 +1395,9 @@ def _should_reserve_draft_shopify_order(order: dict, store) -> bool:
 	if not _is_stock_reservation_enabled():
 		return False
 
+	if not cint(store.get("reserve_stock_for_draft_orders")):
+		return False
+
 	return not (order.get("financial_status") == "paid" and cint(store.auto_submit_sales_order))
 
 

@@ -79,6 +79,7 @@ class ShopifyStore(Document):
 		last_order_sync: DF.Datetime | None
 		oauth_status: DF.Data
 		price_list: DF.Link | None
+		reserve_stock_for_draft_orders: DF.Check
 		sales_invoice_series: DF.Literal[None]
 		sales_order_series: DF.Literal[None]
 		shared_secret: DF.Data | None
