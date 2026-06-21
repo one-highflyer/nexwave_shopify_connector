@@ -1,3 +1,11 @@
+## [15.1.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.2...v15.1.3) (2026-06-21)
+
+
+### Bug Fixes
+
+* **inventory:** gate draft order reservations by store ([4a334b1](https://github.com/one-highflyer/nexwave_shopify_connector/commit/4a334b1c7b8487df2efadbfe8584f7d9242a65bf))
+* **order:** reserve stock for draft Shopify orders ([c3d4106](https://github.com/one-highflyer/nexwave_shopify_connector/commit/c3d4106335c26b68a8395e8af1dcb45788e2d347))
+
 ## [15.1.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.1...v15.1.2) (2026-06-21)
 
 
