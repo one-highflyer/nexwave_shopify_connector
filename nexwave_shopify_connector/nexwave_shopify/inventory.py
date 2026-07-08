@@ -822,8 +822,13 @@ def _resolve_inventory_item_ids(
 	"""
 	has_cache: list[dict] = []
 	needs_lookup: list[dict] = []
+	conflicted_cache_keys = _get_conflicted_inventory_cache_keys(items)
 	for item in items:
-		if item.get("shopify_inventory_item_id"):
+		cache_key = (
+			str(item.get("item_code") or ""),
+			str(item.get("shopify_inventory_item_id") or ""),
+		)
+		if item.get("shopify_inventory_item_id") and cache_key not in conflicted_cache_keys:
 			has_cache.append(item)
 		else:
 			needs_lookup.append(item)
@@ -903,7 +908,7 @@ def _resolve_inventory_item_ids(
 				continue
 
 			# Cache the inventory_item_id back to the DB for next time
-			_cache_inventory_item_id(item["item_code"], store_name, str(inv_item_id))
+			_cache_inventory_item_id(item, store_name, str(inv_item_id), logger=logger)
 
 			enriched = dict(item)
 			enriched["shopify_inventory_item_id"] = str(inv_item_id)
@@ -912,16 +917,40 @@ def _resolve_inventory_item_ids(
 	return has_cache + resolved, skipped, errored
 
 
-def _cache_inventory_item_id(item_code: str, store_name: str, inventory_item_id: str) -> None:
+def _get_conflicted_inventory_cache_keys(items: list[dict]) -> set[tuple[str, str]]:
+	"""Find cached inventory IDs reused across different variants for the same item."""
+	variants_by_cache_key: dict[tuple[str, str], set[str]] = {}
+	for item in items:
+		item_code = str(item.get("item_code") or "")
+		inventory_item_id = str(item.get("shopify_inventory_item_id") or "")
+		variant_id = str(item.get("shopify_variant_id") or "")
+		if not item_code or not inventory_item_id or not variant_id:
+			continue
+		variants_by_cache_key.setdefault((item_code, inventory_item_id), set()).add(variant_id)
+
+	return {cache_key for cache_key, variants in variants_by_cache_key.items() if len(variants) > 1}
+
+
+def _cache_inventory_item_id(item: dict, store_name: str, inventory_item_id: str, logger=None) -> None:
 	"""Cache the Shopify inventory_item_id back to Item Shopify Store.
 
 	Uses frappe.db.set_value (not get_doc + save) to bypass on_update hooks
 	and avoid recursion into product sync. Matches the pattern in
 	shopify_store._upsert_item_store_mapping.
 	"""
+	row_name = item.get("item_shopify_store_name")
+	if not row_name:
+		if logger:
+			logger.warning(
+				"Skipping inventory_item_id cache for %s in store %s because the mapping row is missing",
+				item.get("item_code"),
+				store_name,
+			)
+		return
+
 	frappe.db.set_value(
 		"Item Shopify Store",
-		{"parent": item_code, "shopify_store": store_name},
+		row_name,
 		"shopify_inventory_item_id",
 		inventory_item_id,
 		update_modified=False,
@@ -1026,6 +1055,7 @@ def get_items_with_shopify_ids(
 	if item_codes is None:
 		query = """
 			SELECT
+				iss.name as item_shopify_store_name,
 				iss.parent as item_code,
 				iss.shopify_product_id,
 				iss.shopify_variant_id,
@@ -1046,6 +1076,7 @@ def get_items_with_shopify_ids(
 		params["item_codes"] = tuple(item_codes)
 		query = """
 			SELECT
+				iss.name as item_shopify_store_name,
 				iss.parent as item_code,
 				iss.shopify_product_id,
 				iss.shopify_variant_id,
@@ -1146,10 +1177,14 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 	if store_name:
 		stores = [frappe.get_doc("Shopify Store", store_name)]
 	else:
-		store_names = frappe.get_all(
-			"Item Shopify Store",
-			filters={"parent": item_code, "enabled": 1, "shopify_variant_id": ["is", "set"]},
-			pluck="shopify_store",
+		store_names = sorted(
+			set(
+				frappe.get_all(
+					"Item Shopify Store",
+					filters={"parent": item_code, "enabled": 1, "shopify_variant_id": ["is", "set"]},
+					pluck="shopify_store",
+				)
+			)
 		)
 		stores = [frappe.get_doc("Shopify Store", name) for name in store_names]
 
@@ -1201,26 +1236,27 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 			)
 			continue
 
-		# Locate the mapping row for this store
-		store_row = None
-		for row in item.shopify_stores:
-			if row.shopify_store == store.name:
-				store_row = row
-				break
+		store_rows = [
+			row
+			for row in item.shopify_stores
+			if row.shopify_store == store.name and row.shopify_variant_id and cint(row.enabled)
+		]
 
-		if not store_row or not store_row.shopify_variant_id:
+		if not store_rows:
 			# Item is not mapped to this store. Expected when iterating
 			# all stores for an item; not an error.
 			continue
 
-		# Build a single-item payload and reuse the batched helpers.
+		# Build a payload for each mapped variant and reuse the batched helpers.
 		items_payload = [
 			{
 				"item_code": item_code,
+				"item_shopify_store_name": store_row.name,
 				"shopify_product_id": store_row.shopify_product_id,
 				"shopify_variant_id": store_row.shopify_variant_id,
 				"shopify_inventory_item_id": store_row.get("shopify_inventory_item_id"),
 			}
+			for store_row in store_rows
 		]
 
 		location_mapping = _get_location_mapping(store)

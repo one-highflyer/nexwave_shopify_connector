@@ -46,6 +46,29 @@ def _noop_session(*args, **kwargs):
 	yield
 
 
+def _append_item_shopify_store_row(
+	item_code,
+	store_name,
+	shopify_product_id,
+	shopify_variant_id,
+	shopify_inventory_item_id,
+):
+	item = frappe.get_doc("Item", item_code)
+	row = item.append(
+		"shopify_stores",
+		{
+			"shopify_store": store_name,
+			"shopify_product_id": shopify_product_id,
+			"shopify_variant_id": shopify_variant_id,
+			"shopify_sku": item_code,
+			"shopify_inventory_item_id": shopify_inventory_item_id,
+			"enabled": 1,
+		},
+	)
+	row.db_insert()
+	return row.name
+
+
 class TestSyncStoreInventory(FrappeTestCase):
 	@classmethod
 	def _ensure_unmapped_warehouse(cls):
@@ -335,6 +358,80 @@ class TestSyncStoreInventory(FrappeTestCase):
 			"shopify_inventory_item_id",
 		)
 		self.assertEqual(cached, "9999")
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_conflicted_duplicate_mapping_cache_rechecked_by_variant(
+		self, mock_set, mock_fetch, mock_session
+	):
+		mock_session.temp = _noop_session
+		original_row_name = frappe.db.get_value(
+			"Item Shopify Store",
+			{
+				"parent": self.item_a.name,
+				"shopify_store": self.store.name,
+				"shopify_variant_id": "200",
+			},
+			"name",
+		)
+		duplicate_row_name = _append_item_shopify_store_row(
+			self.item_a.name,
+			self.store.name,
+			shopify_product_id="102",
+			shopify_variant_id="202",
+			shopify_inventory_item_id="1001",
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			mock_fetch.return_value = {
+				"200": {"inventory_item_id": "1001", "tracked": True},
+				"202": {"inventory_item_id": "1003", "tracked": True},
+			}
+			mock_set.return_value = BatchResult(
+				succeeded=[self.item_a.name, self.item_a.name, self.item_b.name],
+				failed=[],
+				throttle=ThrottleStatus(),
+			)
+
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_store_inventory
+
+			sync_store_inventory(self.store.name)
+
+			mock_fetch.assert_called_once()
+			self.assertEqual(set(mock_fetch.call_args[0][0]), {"200", "202"})
+			quantities = mock_set.call_args[0][0]
+			item_a_inventory_ids = {
+				q["inventory_item_id"] for q in quantities if q["item_code"] == self.item_a.name
+			}
+			self.assertEqual(item_a_inventory_ids, {"1001", "1003"})
+			self.assertEqual(
+				frappe.db.get_value(
+					"Item Shopify Store",
+					original_row_name,
+					"shopify_inventory_item_id",
+				),
+				"1001",
+			)
+			self.assertEqual(
+				frappe.db.get_value(
+					"Item Shopify Store",
+					duplicate_row_name,
+					"shopify_inventory_item_id",
+				),
+				"1003",
+			)
+		finally:
+			frappe.db.delete("Item Shopify Store", {"name": duplicate_row_name})
+			frappe.db.set_value(
+				"Item Shopify Store",
+				original_row_name,
+				"shopify_inventory_item_id",
+				"1001",
+				update_modified=False,
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
@@ -1035,6 +1132,78 @@ class TestSyncSingleItemInventory(FrappeTestCase):
 		quantities = call_args[0][0] if call_args[0] else call_args.kwargs["quantities"]
 		self.assertEqual(len(quantities), 1)
 		self.assertEqual(quantities[0]["item_code"], self.item.name)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_single_item_sync_handles_multiple_mapping_rows(self, mock_set, mock_fetch, mock_session):
+		mock_session.temp = _noop_session
+		original_row_name = frappe.db.get_value(
+			"Item Shopify Store",
+			{
+				"parent": self.item.name,
+				"shopify_store": self.store.name,
+				"shopify_variant_id": "600",
+			},
+			"name",
+		)
+		duplicate_row_name = _append_item_shopify_store_row(
+			self.item.name,
+			self.store.name,
+			shopify_product_id="501",
+			shopify_variant_id="601",
+			shopify_inventory_item_id="7001",
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			mock_fetch.return_value = {
+				"600": {"inventory_item_id": "7001", "tracked": True},
+				"601": {"inventory_item_id": "7002", "tracked": True},
+			}
+			mock_set.return_value = BatchResult(
+				succeeded=[self.item.name, self.item.name],
+				failed=[],
+				throttle=ThrottleStatus(),
+			)
+
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_single_item_inventory
+
+			sync_single_item_inventory(self.item.name, self.store.name)
+
+			mock_fetch.assert_called_once()
+			self.assertEqual(set(mock_fetch.call_args[0][0]), {"600", "601"})
+			quantities = mock_set.call_args[0][0]
+			item_inventory_ids = {
+				q["inventory_item_id"] for q in quantities if q["item_code"] == self.item.name
+			}
+			self.assertEqual(item_inventory_ids, {"7001", "7002"})
+			self.assertEqual(
+				frappe.db.get_value(
+					"Item Shopify Store",
+					original_row_name,
+					"shopify_inventory_item_id",
+				),
+				"7001",
+			)
+			self.assertEqual(
+				frappe.db.get_value(
+					"Item Shopify Store",
+					duplicate_row_name,
+					"shopify_inventory_item_id",
+				),
+				"7002",
+			)
+		finally:
+			frappe.db.delete("Item Shopify Store", {"name": duplicate_row_name})
+			frappe.db.set_value(
+				"Item Shopify Store",
+				original_row_name,
+				"shopify_inventory_item_id",
+				"7001",
+				update_modified=False,
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
