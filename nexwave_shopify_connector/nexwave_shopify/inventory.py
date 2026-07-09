@@ -809,8 +809,10 @@ def _resolve_inventory_item_ids(
 ) -> tuple[list[dict], list[dict], list[dict]]:
 	"""Ensure every item has shopify_inventory_item_id. Lazy-backfill via GraphQL nodes query.
 
-	Items already with a cached id are kept as-is. Items without a cached id are
-	looked up in batches. Items are classified into three buckets:
+	Items already with a cached id are kept as-is unless the same item has
+	multiple enabled rows for this store. Multi-row item mappings are rechecked
+	against Shopify so a stale cached inventory ID cannot leak into the final
+	quantity payload. Items are classified into three buckets:
 
 	- resolved: ready to sync (has inventory_item_id and tracking is enabled)
 	- skipped: intentionally not synced (variant deleted, tracking disabled, etc.)
@@ -822,13 +824,10 @@ def _resolve_inventory_item_ids(
 	"""
 	has_cache: list[dict] = []
 	needs_lookup: list[dict] = []
-	conflicted_cache_keys = _get_conflicted_inventory_cache_keys(items)
+	item_codes_requiring_recheck = _get_item_codes_requiring_inventory_cache_recheck(items)
 	for item in items:
-		cache_key = (
-			str(item.get("item_code") or ""),
-			str(item.get("shopify_inventory_item_id") or ""),
-		)
-		if item.get("shopify_inventory_item_id") and cache_key not in conflicted_cache_keys:
+		item_code = str(item.get("item_code") or "")
+		if item.get("shopify_inventory_item_id") and item_code not in item_codes_requiring_recheck:
 			has_cache.append(item)
 		else:
 			needs_lookup.append(item)
@@ -845,12 +844,13 @@ def _resolve_inventory_item_ids(
 		store_name,
 	)
 
-	# Map variant_id -> item dict for fast reassembly
-	by_variant: dict[str, dict] = {}
+	# Map variant_id -> item rows so duplicate mapping rows for the same
+	# variant are fetched once, then each child row cache is kept consistent.
+	by_variant: dict[str, list[dict]] = {}
 	for item in needs_lookup:
 		variant_id = str(item.get("shopify_variant_id") or "")
 		if variant_id:
-			by_variant[variant_id] = item
+			by_variant.setdefault(variant_id, []).append(item)
 
 	variant_ids = list(by_variant.keys())
 	resolved: list[dict] = []
@@ -869,66 +869,67 @@ def _resolve_inventory_item_ids(
 			# but a Shopify API failure prevented it. The sync summary should
 			# surface this as an Error, not a silent skip.
 			for vid in chunk:
-				item = by_variant.get(vid)
-				if item:
+				for item in by_variant.get(vid, []):
 					errored.append({**item, "_error_reason": f"lookup_failed: {e}"})
 			continue
 
 		for vid in chunk:
-			item = by_variant.get(vid)
-			if not item:
+			variant_items = by_variant.get(vid) or []
+			if not variant_items:
 				continue
 			info = lookup_result.get(vid)
 			if not info:
 				# Variant not found in Shopify (likely deleted)
-				logger.info(
-					"Variant %s (item %s) missing from Shopify; skipping",
-					vid,
-					item.get("item_code"),
-				)
-				skipped.append({**item, "_skip_reason": "variant_not_found"})
+				for item in variant_items:
+					logger.info(
+						"Variant %s (item %s) missing from Shopify; skipping",
+						vid,
+						item.get("item_code"),
+					)
+					skipped.append({**item, "_skip_reason": "variant_not_found"})
 				continue
 			tracked = info.get("tracked", False)
 			inv_item_id = info.get("inventory_item_id")
 			if not tracked:
-				logger.info(
-					"Variant %s (item %s) inventory not tracked by Shopify; skipping",
-					vid,
-					item.get("item_code"),
-				)
-				skipped.append({**item, "_skip_reason": "not_tracked"})
+				for item in variant_items:
+					logger.info(
+						"Variant %s (item %s) inventory not tracked by Shopify; skipping",
+						vid,
+						item.get("item_code"),
+					)
+					skipped.append({**item, "_skip_reason": "not_tracked"})
 				continue
 			if not inv_item_id:
-				logger.info(
-					"Variant %s (item %s) has no inventoryItem; skipping",
-					vid,
-					item.get("item_code"),
-				)
-				skipped.append({**item, "_skip_reason": "no_inventory_item"})
+				for item in variant_items:
+					logger.info(
+						"Variant %s (item %s) has no inventoryItem; skipping",
+						vid,
+						item.get("item_code"),
+					)
+					skipped.append({**item, "_skip_reason": "no_inventory_item"})
 				continue
 
-			# Cache the inventory_item_id back to the DB for next time
-			_cache_inventory_item_id(item, store_name, str(inv_item_id), logger=logger)
+			for item in variant_items:
+				# Cache the inventory_item_id back to the DB for next time
+				_cache_inventory_item_id(item, store_name, str(inv_item_id), logger=logger)
 
-			enriched = dict(item)
-			enriched["shopify_inventory_item_id"] = str(inv_item_id)
-			resolved.append(enriched)
+				enriched = dict(item)
+				enriched["shopify_inventory_item_id"] = str(inv_item_id)
+				resolved.append(enriched)
 
 	return has_cache + resolved, skipped, errored
 
 
-def _get_conflicted_inventory_cache_keys(items: list[dict]) -> set[tuple[str, str]]:
-	"""Find cached inventory IDs reused across different variants for the same item."""
-	variants_by_cache_key: dict[tuple[str, str], set[str]] = {}
+def _get_item_codes_requiring_inventory_cache_recheck(items: list[dict]) -> set[str]:
+	"""Find item codes where multiple mapping rows make cached IDs unsafe to trust."""
+	rows_by_item_code: dict[str, int] = {}
 	for item in items:
 		item_code = str(item.get("item_code") or "")
-		inventory_item_id = str(item.get("shopify_inventory_item_id") or "")
-		variant_id = str(item.get("shopify_variant_id") or "")
-		if not item_code or not inventory_item_id or not variant_id:
+		if not item_code:
 			continue
-		variants_by_cache_key.setdefault((item_code, inventory_item_id), set()).add(variant_id)
+		rows_by_item_code[item_code] = rows_by_item_code.get(item_code, 0) + 1
 
-	return {cache_key for cache_key, variants in variants_by_cache_key.items() if len(variants) > 1}
+	return {item_code for item_code, row_count in rows_by_item_code.items() if row_count > 1}
 
 
 def _cache_inventory_item_id(item: dict, store_name: str, inventory_item_id: str, logger=None) -> None:
@@ -966,7 +967,10 @@ def _build_quantities_for_location(
 	"""Build a list of quantity change dicts for one Shopify location."""
 	logger = get_logger()
 	result: list[dict] = []
-	dropped = 0
+	dropped_missing_inventory_id = 0
+	dropped_duplicate_inventory_location = 0
+	duplicate_inventory_location_examples: list[str] = []
+	seen_inventory_locations: set[tuple[str, str]] = set()
 	for item in items:
 		inv_item_id = item.get("shopify_inventory_item_id")
 		if not inv_item_id:
@@ -975,8 +979,16 @@ def _build_quantities_for_location(
 			# for the rest. Anything still missing here would have been
 			# caught and marked skipped in _resolve_inventory_item_ids. Log
 			# a debug line just in case something slips through.
-			dropped += 1
+			dropped_missing_inventory_id += 1
 			continue
+		inv_item_id = str(inv_item_id)
+		inventory_location_key = (inv_item_id, str(location_id))
+		if inventory_location_key in seen_inventory_locations:
+			dropped_duplicate_inventory_location += 1
+			if len(duplicate_inventory_location_examples) < 5:
+				duplicate_inventory_location_examples.append(f"{item['item_code']}:{inv_item_id}")
+			continue
+		seen_inventory_locations.add(inventory_location_key)
 		raw_qty = qty_by_pair.get((item["item_code"], warehouse), 0) or 0
 		# Clamp negative to 0 (Shopify doesn't accept negative)
 		qty = max(int(raw_qty), 0)
@@ -988,11 +1000,18 @@ def _build_quantities_for_location(
 				"qty": qty,
 			}
 		)
-	if dropped:
+	if dropped_missing_inventory_id:
 		logger.debug(
 			"_build_quantities_for_location: dropped %s item(s) without inventory_item_id for location %s",
-			dropped,
+			dropped_missing_inventory_id,
 			location_id,
+		)
+	if dropped_duplicate_inventory_location:
+		logger.warning(
+			"Skipped %s duplicate Shopify inventory quantity row(s) for location %s (examples=%s)",
+			dropped_duplicate_inventory_location,
+			location_id,
+			duplicate_inventory_location_examples,
 		)
 	return result
 
