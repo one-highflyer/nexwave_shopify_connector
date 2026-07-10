@@ -2,16 +2,17 @@
 # For license information, please see license.txt
 
 import math
+import re
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
 from frappe.utils import add_to_date, cint, flt, now_datetime
-from shopify.api_version import ApiVersion
+from shopify.api_version import ApiVersion, Release
 from shopify.session import Session
 
-from nexwave_shopify_connector.nexwave_shopify.connection import DEFAULT_API_VERSION
 from nexwave_shopify_connector.nexwave_shopify.inventory_graphql import (
 	INVENTORY_BATCH_SIZE,
 	NODES_BATCH_SIZE,
@@ -31,11 +32,29 @@ if TYPE_CHECKING:
 
 INVENTORY_SYNC_MODE_FULL = "Full Inventory"
 INVENTORY_SYNC_MODE_CHANGED_BINS = "Changed Bins"
+MIN_INVENTORY_API_VERSION = "2026-01"
 
 INVENTORY_SYNC_METHOD_FULL = "nexwave_shopify_connector.nexwave_shopify.inventory.sync_store_inventory"
 INVENTORY_SYNC_METHOD_CHANGED_BINS = (
 	"nexwave_shopify_connector.nexwave_shopify.inventory.sync_changed_bin_inventory"
 )
+
+
+def _get_inventory_api_version(configured_api_version: str | None) -> str:
+	"""Clamp inventory API calls to the minimum supported Shopify contract."""
+	if not configured_api_version:
+		return MIN_INVENTORY_API_VERSION
+
+	api_version = str(configured_api_version).strip()
+	if api_version.lower() == "unstable":
+		return "unstable"
+
+	match = re.fullmatch(r"(\d{4})-(01|04|07|10)", api_version)
+	if not match:
+		return MIN_INVENTORY_API_VERSION
+
+	year, month = int(match.group(1)), int(match.group(2))
+	return api_version if (year, month) >= (2026, 1) else MIN_INVENTORY_API_VERSION
 
 
 def update_inventory_on_shopify():
@@ -147,11 +166,9 @@ def sync_store_inventory(store_name: str, force: bool = False):
 		logger.warning("Inventory sync disabled via bench config for %s", store_name)
 		return
 
-	# Initialize API versions
-	_init_shopify_api_versions()
-
 	# Get auth details
-	api_version = store.api_version or DEFAULT_API_VERSION
+	api_version = _get_inventory_api_version(store.api_version)
+	_init_shopify_api_versions(api_version)
 	access_token = store.get_password("access_token")
 
 	if not access_token:
@@ -214,12 +231,19 @@ def sync_store_inventory(store_name: str, force: bool = False):
 					reference_name=item.get("item_code"),
 				)
 
-			# Iterate locations; for each build a list of quantity entries and
-			# chunk into INVENTORY_BATCH_SIZE mutations.
-			for location_id, warehouse in location_mapping:
-				qty_entries = _build_quantities_for_location(
-					location_id, warehouse, items_to_sync, qty_by_pair
-				)
+			target_owners = _build_inventory_target_owner_map(items_to_sync)
+			quantities_by_location, preparation_failures = _prepare_inventory_quantities(
+				location_mapping, items_to_sync, qty_by_pair, target_owners
+			)
+			total_error += len(preparation_failures)
+			_persist_inventory_failures(
+				preparation_failures,
+				method="sync_store_inventory",
+				store_name=store_name,
+				message_prefix="Inventory preparation conflict",
+			)
+
+			for location_id, qty_entries in quantities_by_location.items():
 				if not qty_entries:
 					continue
 
@@ -232,6 +256,7 @@ def sync_store_inventory(store_name: str, force: bool = False):
 							store_name=store_name,
 							timestamp_iso=timestamp_iso,
 							logger=logger,
+							api_version=api_version,
 						)
 					except ShopifyGraphQLError as e:
 						# Whole batch failed after retries
@@ -258,16 +283,11 @@ def sync_store_inventory(store_name: str, force: bool = False):
 
 					total_sync += len(result.succeeded)
 					total_error += len(result.failed)
-					for item_code, err_msg in result.failed:
-						create_shopify_log(
-							status="Error",
-							method="sync_store_inventory",
-							shopify_store=store_name,
-							message=f"Shopify userError for {item_code}",
-							exception=err_msg,
-							reference_doctype="Item",
-							reference_name=item_code,
-						)
+					_persist_inventory_failures(
+						result.failed,
+						method="sync_store_inventory",
+						store_name=store_name,
+					)
 
 					batch_elapsed = time.monotonic() - batch_t0
 					logger.info(
@@ -475,8 +495,8 @@ def sync_items_inventory(
 			stats["errors"] = len(item_codes)
 			return stats
 
-		_init_shopify_api_versions()
-		api_version = store.api_version or DEFAULT_API_VERSION
+		api_version = _get_inventory_api_version(store.api_version)
+		_init_shopify_api_versions(api_version)
 		access_token = store.get_password("access_token")
 		if not access_token:
 			create_shopify_log(
@@ -490,11 +510,12 @@ def sync_items_inventory(
 			stats["errors"] = len(item_codes)
 			return stats
 
-		items_to_sync = get_items_with_shopify_ids(store_name, item_codes=item_codes)
-		if not items_to_sync:
+		store_items = get_items_with_shopify_ids(store_name)
+		if not store_items:
 			return stats
 
-		pairs = [(item["item_code"], wh) for item in items_to_sync for (_loc, wh) in location_mapping]
+		selected_item_codes = set(item_codes)
+		pairs = [(item_code, wh) for item_code in selected_item_codes for (_loc, wh) in location_mapping]
 		qty_by_pair = _bulk_get_stock_qty(
 			pairs,
 			include_draft_order_reservations=_include_draft_order_reservations(store),
@@ -502,9 +523,18 @@ def sync_items_inventory(
 		timestamp_iso = now_datetime().isoformat()
 
 		with Session.temp(store.shop_domain, api_version, access_token):
-			items_to_sync, skipped_backfill, errored_backfill = _resolve_inventory_item_ids(
-				store_name, items_to_sync, logger
+			resolved_store_items, skipped_store_items, errored_store_items = _resolve_inventory_item_ids(
+				store_name, store_items, logger
 			)
+			items_to_sync = [
+				item for item in resolved_store_items if item.get("item_code") in selected_item_codes
+			]
+			skipped_backfill = [
+				item for item in skipped_store_items if item.get("item_code") in selected_item_codes
+			]
+			errored_backfill = [
+				item for item in errored_store_items if item.get("item_code") in selected_item_codes
+			]
 			stats["skipped"] += len(skipped_backfill)
 			stats["errors"] += len(errored_backfill)
 			for item in errored_backfill:
@@ -518,10 +548,19 @@ def sync_items_inventory(
 					reference_name=item.get("item_code"),
 				)
 
-			for location_id, warehouse in location_mapping:
-				qty_entries = _build_quantities_for_location(
-					location_id, warehouse, items_to_sync, qty_by_pair
-				)
+			target_owners = _build_inventory_target_owner_map(resolved_store_items)
+			quantities_by_location, preparation_failures = _prepare_inventory_quantities(
+				location_mapping, items_to_sync, qty_by_pair, target_owners
+			)
+			stats["errors"] += len(preparation_failures)
+			_persist_inventory_failures(
+				preparation_failures,
+				method=method,
+				store_name=store_name,
+				message_prefix="Inventory preparation conflict",
+			)
+
+			for location_id, qty_entries in quantities_by_location.items():
 				if not qty_entries:
 					continue
 
@@ -534,6 +573,7 @@ def sync_items_inventory(
 							store_name=store_name,
 							timestamp_iso=timestamp_iso,
 							logger=logger,
+							api_version=api_version,
 						)
 					except ShopifyGraphQLError as e:
 						stats["errors"] += len(chunk)
@@ -555,16 +595,11 @@ def sync_items_inventory(
 
 					stats["synced"] += len(result.succeeded)
 					stats["errors"] += len(result.failed)
-					for item_code, err_msg in result.failed:
-						create_shopify_log(
-							status="Error",
-							method=method,
-							shopify_store=store_name,
-							message=f"Shopify userError for {item_code}",
-							exception=err_msg,
-							reference_doctype="Item",
-							reference_name=item_code,
-						)
+					_persist_inventory_failures(
+						result.failed,
+						method=method,
+						store_name=store_name,
+					)
 
 					batch_elapsed = time.monotonic() - batch_t0
 					logger.info(
@@ -664,6 +699,7 @@ def _execute_batch_with_retry(
 	store_name: str,
 	timestamp_iso: str,
 	logger,
+	api_version: str | None = None,
 ) -> BatchResult:
 	"""Wrap set_inventory_batch with retry logic.
 
@@ -678,9 +714,17 @@ def _execute_batch_with_retry(
 	"""
 	backoff = [2.0, 4.0]
 	last_error: ShopifyGraphQLError | None = None
+	idempotency_key = str(uuid.uuid4())
 	for attempt in range(3):
 		try:
-			return set_inventory_batch(chunk, store_name, timestamp_iso, logger)
+			return set_inventory_batch(
+				chunk,
+				store_name,
+				timestamp_iso,
+				logger,
+				api_version=api_version,
+				idempotency_key=idempotency_key,
+			)
 		except ShopifyGraphQLError as e:
 			last_error = e
 			status = e.http_status
@@ -958,62 +1002,122 @@ def _cache_inventory_item_id(item: dict, store_name: str, inventory_item_id: str
 	)
 
 
-def _build_quantities_for_location(
-	location_id: str,
-	warehouse: str,
+def _persist_inventory_failures(
+	failures: list[tuple[str, str]],
+	*,
+	method: str,
+	store_name: str,
+	message_prefix: str = "Shopify userError",
+) -> None:
+	"""Persist per-item inventory failures in the integration log."""
+	for item_code, error_message in failures:
+		create_shopify_log(
+			status="Error",
+			method=method,
+			shopify_store=store_name,
+			message=f"{message_prefix} for {item_code}",
+			exception=error_message,
+			reference_doctype="Item",
+			reference_name=item_code,
+		)
+
+
+def _build_inventory_target_owner_map(items: list[dict]) -> dict[str, set[str]]:
+	"""Map each resolved Shopify inventory item to its distinct source items."""
+	target_owners: dict[str, set[str]] = {}
+	for item in items:
+		inventory_item_id = item.get("shopify_inventory_item_id")
+		item_code = str(item.get("item_code") or "")
+		if not inventory_item_id or not item_code:
+			continue
+		target_owners.setdefault(str(inventory_item_id), set()).add(item_code)
+	return target_owners
+
+
+def _prepare_inventory_quantities(
+	location_mapping: list[tuple[str, str]],
 	items: list[dict],
 	qty_by_pair: dict[tuple[str, str], float],
-) -> list[dict]:
-	"""Build a list of quantity change dicts for one Shopify location."""
+	target_owners: dict[str, set[str]],
+) -> tuple[dict[str, list[dict]], list[tuple[str, str]]]:
+	"""Prepare conflict-safe quantities for all configured Shopify locations."""
 	logger = get_logger()
-	result: list[dict] = []
+	entries_by_target: dict[tuple[str, str], list[dict]] = {}
 	dropped_missing_inventory_id = 0
-	dropped_duplicate_inventory_location = 0
-	duplicate_inventory_location_examples: list[str] = []
-	seen_inventory_locations: set[tuple[str, str]] = set()
 	for item in items:
 		inv_item_id = item.get("shopify_inventory_item_id")
 		if not inv_item_id:
-			# Upstream SQL in get_items_with_shopify_ids filters rows without
-			# a variant_id, and the lazy backfill resolves inventory_item_id
-			# for the rest. Anything still missing here would have been
-			# caught and marked skipped in _resolve_inventory_item_ids. Log
-			# a debug line just in case something slips through.
 			dropped_missing_inventory_id += 1
 			continue
 		inv_item_id = str(inv_item_id)
-		inventory_location_key = (inv_item_id, str(location_id))
-		if inventory_location_key in seen_inventory_locations:
-			dropped_duplicate_inventory_location += 1
-			if len(duplicate_inventory_location_examples) < 5:
-				duplicate_inventory_location_examples.append(f"{item['item_code']}:{inv_item_id}")
-			continue
-		seen_inventory_locations.add(inventory_location_key)
-		raw_qty = qty_by_pair.get((item["item_code"], warehouse), 0) or 0
-		# Clamp negative to 0 (Shopify doesn't accept negative)
-		qty = max(int(raw_qty), 0)
-		result.append(
-			{
-				"item_code": item["item_code"],
+		item_code = str(item["item_code"])
+		for location_id, warehouse in location_mapping:
+			target_location_id = str(location_id)
+			raw_qty = qty_by_pair.get((item_code, warehouse), 0) or 0
+			qty = max(int(raw_qty), 0)
+			entry = {
+				"item_code": item_code,
 				"inventory_item_id": inv_item_id,
-				"location_id": location_id,
+				"location_id": target_location_id,
 				"qty": qty,
 			}
-		)
+			entries_by_target.setdefault((inv_item_id, target_location_id), []).append(entry)
+
+	quantities_by_location: dict[str, list[dict]] = {}
+	failures: list[tuple[str, str]] = []
+	collapsed_duplicates = 0
+	reported_owner_conflicts: set[str] = set()
+	for (inv_item_id, target_location_id), entries in entries_by_target.items():
+		item_codes = {entry["item_code"] for entry in entries}
+		owners = sorted(target_owners.get(inv_item_id, set()) | item_codes)
+		if len(owners) > 1:
+			if inv_item_id not in reported_owner_conflicts:
+				error_message = (
+					f"Multiple source items target Shopify inventory item {inv_item_id}: "
+					f"{', '.join(owners)}"
+				)
+				failures.extend((item_code, error_message) for item_code in owners)
+				reported_owner_conflicts.add(inv_item_id)
+			continue
+
+		entry_signatures = {
+			(
+				entry["item_code"],
+				entry["qty"],
+				entry["inventory_item_id"],
+				str(entry["location_id"]),
+			)
+			for entry in entries
+		}
+
+		if len(entry_signatures) > 1:
+			item_code = owners[0]
+			error_message = (
+				f"Source item {item_code} has conflicting desired quantities for Shopify inventory item "
+				f"{inv_item_id} at location {target_location_id}"
+			)
+			failures.append((item_code, error_message))
+			continue
+
+		quantities_by_location.setdefault(target_location_id, []).append(entries[0])
+		collapsed_duplicates += len(entries) - 1
+
 	if dropped_missing_inventory_id:
 		logger.debug(
-			"_build_quantities_for_location: dropped %s item(s) without inventory_item_id for location %s",
+			"_prepare_inventory_quantities: dropped %s item(s) without inventory_item_id",
 			dropped_missing_inventory_id,
-			location_id,
 		)
-	if dropped_duplicate_inventory_location:
+	if collapsed_duplicates:
+		logger.info(
+			"Collapsed %s duplicate Shopify inventory mapping or location row(s)",
+			collapsed_duplicates,
+		)
+	if failures:
 		logger.warning(
-			"Skipped %s duplicate Shopify inventory quantity row(s) for location %s (examples=%s)",
-			dropped_duplicate_inventory_location,
-			location_id,
-			duplicate_inventory_location_examples,
+			"Omitted %s item(s) from Shopify inventory payload due to mapping conflicts",
+			len(failures),
 		)
-	return result
+	return quantities_by_location, failures
 
 
 def _throttle_if_needed(throttle: ThrottleStatus, logger) -> None:
@@ -1049,10 +1153,16 @@ def _chunked(seq, size):
 		yield seq[i : i + size]
 
 
-def _init_shopify_api_versions():
-	"""Initialize Shopify API versions if not already loaded."""
+def _init_shopify_api_versions(api_version: str) -> None:
+	"""Register the selected inventory API version with the installed Shopify SDK."""
 	if not ApiVersion.versions:
-		ApiVersion.fetch_known_versions()
+		ApiVersion.define_known_versions()
+
+	if api_version == "unstable":
+		if api_version not in ApiVersion.versions:
+			ApiVersion.define_known_versions()
+	elif api_version not in ApiVersion.versions:
+		ApiVersion.define_version(Release(api_version))
 
 
 def get_items_with_shopify_ids(
@@ -1233,9 +1343,8 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 			)
 			continue
 
-		_init_shopify_api_versions()
-
-		api_version = store.api_version or DEFAULT_API_VERSION
+		api_version = _get_inventory_api_version(store.api_version)
+		_init_shopify_api_versions(api_version)
 		access_token = store.get_password("access_token")
 		if not access_token:
 			# Token rotation or misconfiguration: loud error, not silent.
@@ -1255,28 +1364,12 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 			)
 			continue
 
-		store_rows = [
-			row
+		if not any(
+			row.shopify_store == store.name and row.shopify_variant_id and cint(row.enabled)
 			for row in item.shopify_stores
-			if row.shopify_store == store.name and row.shopify_variant_id and cint(row.enabled)
-		]
-
-		if not store_rows:
-			# Item is not mapped to this store. Expected when iterating
-			# all stores for an item; not an error.
+		):
+			# Expected when a specific store was supplied for an unmapped item.
 			continue
-
-		# Build a payload for each mapped variant and reuse the batched helpers.
-		items_payload = [
-			{
-				"item_code": item_code,
-				"item_shopify_store_name": store_row.name,
-				"shopify_product_id": store_row.shopify_product_id,
-				"shopify_variant_id": store_row.shopify_variant_id,
-				"shopify_inventory_item_id": store_row.get("shopify_inventory_item_id"),
-			}
-			for store_row in store_rows
-		]
 
 		location_mapping = _get_location_mapping(store)
 		if not location_mapping:
@@ -1298,6 +1391,10 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 			)
 			continue
 
+		store_items = get_items_with_shopify_ids(store.name)
+		if not store_items:
+			continue
+
 		pairs = [(item_code, wh) for (_loc, wh) in location_mapping]
 		qty_by_pair = _bulk_get_stock_qty(
 			pairs,
@@ -1308,9 +1405,35 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 
 		try:
 			with Session.temp(store.shop_domain, api_version, access_token):
-				items_payload, skipped, errored = _resolve_inventory_item_ids(
-					store.name, items_payload, logger
+				resolved_store_items, skipped_store_items, errored_store_items = _resolve_inventory_item_ids(
+					store.name, store_items, logger
 				)
+				items_payload = [
+					store_item
+					for store_item in resolved_store_items
+					if store_item.get("item_code") == item_code
+				]
+				skipped = [
+					store_item
+					for store_item in skipped_store_items
+					if store_item.get("item_code") == item_code
+				]
+				errored = [
+					store_item
+					for store_item in errored_store_items
+					if store_item.get("item_code") == item_code
+				]
+				for errored_item in errored:
+					create_shopify_log(
+						status="Error",
+						method="sync_single_item_inventory",
+						shopify_store=store.name,
+						message=f"Backfill failed for {item_code}",
+						exception=errored_item.get("_error_reason", ""),
+						reference_doctype="Item",
+						reference_name=item_code,
+					)
+
 				if not items_payload:
 					reasons = [s.get("_skip_reason") for s in skipped] + [
 						e.get("_error_reason") for e in errored
@@ -1321,24 +1444,20 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 						store.name,
 						reasons,
 					)
-					# If the skip was due to a backfill error (not a legitimate
-					# skip reason), log it as an Error so it's visible.
-					for e_item in errored:
-						create_shopify_log(
-							status="Error",
-							method="sync_single_item_inventory",
-							shopify_store=store.name,
-							message=f"Backfill failed for {item_code}",
-							exception=e_item.get("_error_reason", ""),
-							reference_doctype="Item",
-							reference_name=item_code,
-						)
 					continue
 
-				for location_id, warehouse in location_mapping:
-					qty_entries = _build_quantities_for_location(
-						location_id, warehouse, items_payload, qty_by_pair
-					)
+				target_owners = _build_inventory_target_owner_map(resolved_store_items)
+				quantities_by_location, preparation_failures = _prepare_inventory_quantities(
+					location_mapping, items_payload, qty_by_pair, target_owners
+				)
+				_persist_inventory_failures(
+					preparation_failures,
+					method="sync_single_item_inventory",
+					store_name=store.name,
+					message_prefix="Inventory preparation conflict",
+				)
+
+				for location_id, qty_entries in quantities_by_location.items():
 					if not qty_entries:
 						continue
 					try:
@@ -1347,6 +1466,7 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 							store_name=store.name,
 							timestamp_iso=timestamp_iso,
 							logger=logger,
+							api_version=api_version,
 						)
 					except ShopifyGraphQLError as e:
 						logger.error(
@@ -1368,16 +1488,11 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 						)
 						continue
 
-					for item_code_, err_msg in result.failed:
-						create_shopify_log(
-							status="Error",
-							method="sync_single_item_inventory",
-							shopify_store=store.name,
-							message=f"Shopify userError for {item_code_}",
-							exception=err_msg,
-							reference_doctype="Item",
-							reference_name=item_code_,
-						)
+					_persist_inventory_failures(
+						result.failed,
+						method="sync_single_item_inventory",
+						store_name=store.name,
+					)
 					_throttle_if_needed(result.throttle, logger)
 
 		except Exception as e:

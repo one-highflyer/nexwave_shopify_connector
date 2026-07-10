@@ -162,6 +162,7 @@ class TestSetInventoryBatch(FrappeTestCase):
 		}
 		quantities = [{"item_code": "ITEM-A", "inventory_item_id": "1001", "location_id": "loc1", "qty": 5}]
 		set_inventory_batch(quantities, "test.myshopify.com", "2026-04-10T10:00:00")
+		query = mock_exec.call_args[0][0]
 		variables = mock_exec.call_args[0][1]
 		qty_entry = variables["input"]["quantities"][0]
 		self.assertEqual(qty_entry["inventoryItemId"], "gid://shopify/InventoryItem/1001")
@@ -171,6 +172,73 @@ class TestSetInventoryBatch(FrappeTestCase):
 		self.assertEqual(variables["input"]["name"], "available")
 		self.assertIs(variables["input"]["ignoreCompareQuantity"], True)
 		self.assertEqual(variables["input"]["reason"], "correction")
+		self.assertNotIn("changeFromQuantity", qty_entry)
+		self.assertNotIn("idempotencyKey", variables)
+		self.assertNotIn("@idempotent", query)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_2024_01_uses_legacy_mutation_shape(self, mock_exec):
+		mock_exec.return_value = {
+			"data": {"inventorySetQuantities": {"inventoryAdjustmentGroup": None, "userErrors": []}}
+		}
+		quantities = [{"item_code": "ITEM-A", "inventory_item_id": "1001", "location_id": "loc1", "qty": 5}]
+
+		set_inventory_batch(
+			quantities,
+			"test.myshopify.com",
+			"2026-04-10T10:00:00",
+			api_version="2024-01",
+		)
+
+		query, variables = mock_exec.call_args[0]
+		self.assertNotIn("$idempotencyKey", query)
+		self.assertNotIn("@idempotent", query)
+		self.assertNotIn("idempotencyKey", variables)
+		self.assertIs(variables["input"]["ignoreCompareQuantity"], True)
+		self.assertNotIn("changeFromQuantity", variables["input"]["quantities"][0])
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_2026_01_and_later_use_idempotent_mutation_shape(self, mock_exec):
+		mock_exec.return_value = {
+			"data": {"inventorySetQuantities": {"inventoryAdjustmentGroup": None, "userErrors": []}}
+		}
+		quantities = [{"item_code": "ITEM-A", "inventory_item_id": "1001", "location_id": "loc1", "qty": 5}]
+
+		for api_version in ("2026-01", "2026-04", "2026-07", "unstable"):
+			with self.subTest(api_version=api_version):
+				mock_exec.reset_mock()
+				idempotency_key = f"inventory-batch-{api_version}"
+				set_inventory_batch(
+					quantities,
+					"test.myshopify.com",
+					"2026-04-10T10:00:00",
+					api_version=api_version,
+					idempotency_key=idempotency_key,
+				)
+
+				query, variables = mock_exec.call_args[0]
+				self.assertIn("$idempotencyKey: String!", query)
+				self.assertIn(
+					"inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey)",
+					query,
+				)
+				self.assertEqual(variables["idempotencyKey"], idempotency_key)
+				self.assertNotIn("ignoreCompareQuantity", variables["input"])
+				self.assertIsNone(variables["input"]["quantities"][0]["changeFromQuantity"])
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_modern_mutation_requires_idempotency_key(self, mock_exec):
+		quantities = [{"item_code": "ITEM-A", "inventory_item_id": "1001", "location_id": "loc1", "qty": 5}]
+
+		with self.assertRaisesRegex(ValueError, "idempotency_key is required"):
+			set_inventory_batch(
+				quantities,
+				"test.myshopify.com",
+				"2026-04-10T10:00:00",
+				api_version="2026-04",
+			)
+
+		mock_exec.assert_not_called()
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
 	def test_empty_quantities_returns_empty_batch_result(self, mock_exec):

@@ -217,6 +217,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 		mock_set.assert_called_once()
 		quantities = mock_set.call_args[0][0]
 		self.assertEqual(len(quantities), 2)
+		self.assertEqual(mock_set.call_args.kwargs["api_version"], "2026-01")
 
 		# Assert last_inventory_sync was updated
 		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
@@ -517,6 +518,94 @@ class TestSyncStoreInventory(FrappeTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_different_items_same_inventory_target_are_omitted_and_reported(
+		self, mock_set, mock_fetch, mock_session
+	):
+		mock_session.temp = _noop_session
+		set_bin_qty(self.item_a.name, TEST_WAREHOUSE, 10)
+		set_bin_qty(self.item_b.name, TEST_WAREHOUSE, 0)
+		frappe.db.sql(
+			"""
+			UPDATE `tabItem Shopify Store`
+			SET shopify_inventory_item_id = ''
+			WHERE parent IN (%s, %s) AND shopify_store = %s
+			""",
+			(self.item_a.name, self.item_b.name, self.store.name),
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			mock_fetch.return_value = {
+				"200": {"inventory_item_id": "1001", "tracked": True},
+				"201": {"inventory_item_id": "1001", "tracked": True},
+			}
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_store_inventory
+
+			sync_store_inventory(self.store.name)
+
+			mock_fetch.assert_called_once()
+			self.assertEqual(set(mock_fetch.call_args[0][0]), {"200", "201"})
+			mock_set.assert_not_called()
+			conflict_logs = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"status": "Error",
+					"method": "sync_store_inventory",
+					"reference_doctype": "Item",
+				},
+				fields=["message", "traceback", "reference_name"],
+			)
+			conflict_logs = [
+				log
+				for log in conflict_logs
+				if log.get("message", "").startswith("Inventory preparation conflict")
+			]
+			self.assertEqual(
+				{log.reference_name for log in conflict_logs},
+				{self.item_a.name, self.item_b.name},
+			)
+			for log in conflict_logs:
+				self.assertIn("Multiple source items target Shopify inventory item 1001", log.traceback)
+
+			summary = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"status": "Error",
+					"method": "sync_store_inventory",
+					"reference_name": self.store.name,
+				},
+				fields=["message"],
+				order_by="creation desc",
+				limit=1,
+			)
+			self.assertTrue(summary)
+			self.assertIn("0 synced, 0 skipped, 2 errors", summary[0].message)
+			self.assertIsNone(frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync"))
+		finally:
+			frappe.db.sql(
+				"""
+				UPDATE `tabItem Shopify Store`
+				SET shopify_inventory_item_id = CASE parent
+					WHEN %s THEN '1001'
+					WHEN %s THEN '1002'
+				END
+				WHERE parent IN (%s, %s) AND shopify_store = %s
+				""",
+				(
+					self.item_a.name,
+					self.item_b.name,
+					self.item_a.name,
+					self.item_b.name,
+					self.store.name,
+				),
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
 	def test_lazy_backfill_skips_deleted_variants(self, mock_set, mock_fetch, mock_session):
 		mock_session.temp = _noop_session
 		frappe.db.sql(
@@ -574,7 +663,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 
 			sync_store_inventory(self.store.name)
 
-			# set_inventory_batch should not be called at all — no items resolved
+			# set_inventory_batch should not be called at all; no items resolved
 			mock_set.assert_not_called()
 
 			# An Error log must exist for the backfill failure (not a Success summary)
@@ -798,9 +887,50 @@ class TestSyncStoreInventory(FrappeTestCase):
 		mock_set.assert_called_once()
 		quantities = mock_set.call_args[0][0]
 		self.assertEqual({q["item_code"] for q in quantities}, {self.item_a.name})
+		self.assertEqual(mock_set.call_args.kwargs["api_version"], "2026-01")
 
 		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
 		self.assertGreater(last_sync, old_sync)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_changed_item_summary_ignores_unselected_backfill_skip(self, mock_set, mock_fetch, mock_session):
+		mock_session.temp = _noop_session
+		frappe.db.set_value(
+			"Item Shopify Store",
+			{"parent": self.item_b.name, "shopify_store": self.store.name},
+			"shopify_inventory_item_id",
+			"",
+			update_modified=False,
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			mock_fetch.return_value = {}
+			mock_set.return_value = BatchResult(
+				succeeded=[self.item_a.name],
+				failed=[],
+				throttle=ThrottleStatus(),
+			)
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_items_inventory
+
+			stats = sync_items_inventory(self.store.name, [self.item_a.name])
+
+			self.assertEqual(stats["synced"], 1)
+			self.assertEqual(stats["skipped"], 0)
+			self.assertEqual(stats["errors"], 0)
+			quantities = mock_set.call_args[0][0]
+			self.assertEqual({q["item_code"] for q in quantities}, {self.item_a.name})
+		finally:
+			frappe.db.set_value(
+				"Item Shopify Store",
+				{"parent": self.item_b.name, "shopify_store": self.store.name},
+				"shopify_inventory_item_id",
+				"1002",
+				update_modified=False,
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
@@ -879,6 +1009,76 @@ class TestSyncStoreInventory(FrappeTestCase):
 		mock_set.assert_not_called()
 		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
 		self.assertGreater(last_sync, cursor)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_changed_bin_conflicts_are_counted_without_advancing_cursor(self, mock_set, mock_session):
+		mock_session.temp = _noop_session
+		old_sync = add_to_date(now_datetime(), minutes=-30).replace(microsecond=0)
+		before_cursor = add_to_date(old_sync, minutes=-1)
+		changed_at = add_to_date(now_datetime(), minutes=-1)
+		self._set_last_inventory_sync(old_sync)
+		self._set_bin_modified(self.item_a.name, TEST_WAREHOUSE, changed_at)
+		self._set_bin_modified(self.item_b.name, TEST_WAREHOUSE, before_cursor)
+		frappe.db.set_value(
+			"Item Shopify Store",
+			{"parent": self.item_b.name, "shopify_store": self.store.name},
+			"shopify_inventory_item_id",
+			"1001",
+			update_modified=False,
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_changed_bin_inventory
+
+			sync_changed_bin_inventory(self.store.name, force=True)
+
+			mock_set.assert_not_called()
+			last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
+			self.assertEqual(last_sync, old_sync)
+			conflict_logs = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"status": "Error",
+					"method": "sync_changed_bin_inventory",
+					"reference_doctype": "Item",
+				},
+				fields=["message", "reference_name"],
+			)
+			conflict_logs = [
+				log
+				for log in conflict_logs
+				if log.get("message", "").startswith("Inventory preparation conflict")
+			]
+			self.assertEqual(
+				{log.reference_name for log in conflict_logs},
+				{self.item_a.name, self.item_b.name},
+			)
+			summary = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"status": "Error",
+					"method": "sync_changed_bin_inventory",
+					"reference_name": self.store.name,
+				},
+				fields=["message"],
+				order_by="creation desc",
+				limit=1,
+			)
+			self.assertTrue(summary)
+			self.assertIn("0 synced, 0 skipped, 2 errors", summary[0].message)
+		finally:
+			frappe.db.set_value(
+				"Item Shopify Store",
+				{"parent": self.item_b.name, "shopify_store": self.store.name},
+				"shopify_inventory_item_id",
+				"1002",
+				update_modified=False,
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
@@ -997,6 +1197,77 @@ class TestSyncStoreInventory(FrappeTestCase):
 			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
 
+class TestInventoryApiVersion(FrappeTestCase):
+	def test_old_missing_and_invalid_versions_are_clamped(self):
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _get_inventory_api_version
+
+		for configured_version in (
+			None,
+			"",
+			"2024-01",
+			"2025-10",
+			"invalid",
+			"2026-00",
+			"2026-1",
+			"2026-02",
+		):
+			with self.subTest(configured_version=configured_version):
+				self.assertEqual(_get_inventory_api_version(configured_version), "2026-01")
+
+	def test_modern_and_unstable_versions_are_preserved(self):
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _get_inventory_api_version
+
+		for configured_version in ("2026-01", "2026-04", "2026-07", "unstable"):
+			with self.subTest(configured_version=configured_version):
+				self.assertEqual(_get_inventory_api_version(configured_version), configured_version)
+
+	def test_selected_release_is_registered_with_sdk(self):
+		from shopify.api_version import ApiVersion
+
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _init_shopify_api_versions
+
+		with patch.object(ApiVersion, "versions", {}):
+			_init_shopify_api_versions("2026-07")
+
+			self.assertIn("unstable", ApiVersion.versions)
+			self.assertIn("2024-01", ApiVersion.versions)
+			self.assertEqual(ApiVersion.versions["2026-07"].name, "2026-07")
+
+
+class TestInventoryQuantityPreparation(FrappeTestCase):
+	def test_duplicate_location_with_different_quantities_is_rejected(self):
+		from nexwave_shopify_connector.nexwave_shopify.inventory import (
+			_prepare_inventory_quantities,
+		)
+
+		location_mapping = [("loc1", "Warehouse A"), ("loc1", "Warehouse B")]
+		items = [{"item_code": "ITEM-A", "shopify_inventory_item_id": "1001"}]
+		target_owners = {"1001": {"ITEM-A"}}
+
+		quantities_by_location, failures = _prepare_inventory_quantities(
+			location_mapping,
+			items,
+			{("ITEM-A", "Warehouse A"): 4, ("ITEM-A", "Warehouse B"): 7},
+			target_owners,
+		)
+
+		self.assertEqual(quantities_by_location, {})
+		self.assertEqual(len(failures), 1)
+		self.assertEqual(failures[0][0], "ITEM-A")
+		self.assertIn("conflicting desired quantities", failures[0][1])
+
+		quantities_by_location, failures = _prepare_inventory_quantities(
+			location_mapping,
+			items,
+			{("ITEM-A", "Warehouse A"): 4, ("ITEM-A", "Warehouse B"): 4},
+			target_owners,
+		)
+
+		self.assertEqual(failures, [])
+		self.assertEqual(len(quantities_by_location["loc1"]), 1)
+		self.assertEqual(quantities_by_location["loc1"][0]["qty"], 4)
+
+
 class TestExecuteBatchWithRetry(FrappeTestCase):
 	"""Unit tests for the retry wrapper around set_inventory_batch.
 
@@ -1037,6 +1308,42 @@ class TestExecuteBatchWithRetry(FrappeTestCase):
 		self.assertEqual(mock_sleep.call_count, 2)
 		self.assertEqual(mock_sleep.call_args_list[0][0][0], 2.5)
 		self.assertEqual(mock_sleep.call_args_list[1][0][0], 2.5)
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.time.sleep")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.uuid.uuid4")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_idempotency_key_is_reused_for_retries_and_unique_per_batch(
+		self, mock_set, mock_uuid, mock_sleep
+	):
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _execute_batch_with_retry
+
+		transient_error = ShopifyGraphQLError("server error", http_status=503)
+		success = BatchResult(succeeded=["ITEM-A"], failed=[], throttle=ThrottleStatus())
+		mock_uuid.side_effect = ["batch-key-one", "batch-key-two"]
+		mock_set.side_effect = [transient_error, success, success]
+
+		_execute_batch_with_retry(
+			chunk=self._make_chunk(),
+			store_name="test.myshopify.com",
+			timestamp_iso="2026-04-10T10:00:00",
+			logger=frappe.logger("test"),
+			api_version="2026-04",
+		)
+		_execute_batch_with_retry(
+			chunk=self._make_chunk(),
+			store_name="test.myshopify.com",
+			timestamp_iso="2026-04-10T10:00:01",
+			logger=frappe.logger("test"),
+			api_version="2026-04",
+		)
+
+		self.assertEqual(mock_uuid.call_count, 2)
+		self.assertEqual(
+			[call.kwargs["idempotency_key"] for call in mock_set.call_args_list],
+			["batch-key-one", "batch-key-one", "batch-key-two"],
+		)
+		self.assertTrue(all(call.kwargs["api_version"] == "2026-04" for call in mock_set.call_args_list))
+		mock_sleep.assert_called_once_with(2.0)
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.time.sleep")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
@@ -1213,6 +1520,7 @@ class TestSyncSingleItemInventory(FrappeTestCase):
 		quantities = call_args[0][0] if call_args[0] else call_args.kwargs["quantities"]
 		self.assertEqual(len(quantities), 1)
 		self.assertEqual(quantities[0]["item_code"], self.item.name)
+		self.assertEqual(call_args.kwargs["api_version"], "2026-01")
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.fetch_inventory_item_ids")
@@ -1361,6 +1669,56 @@ class TestSyncSingleItemInventory(FrappeTestCase):
 				"shopify_inventory_item_id",
 				"7001",
 				update_modified=False,
+			)
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
+
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
+	def test_single_item_conflict_includes_unselected_target_owner(self, mock_set, mock_session):
+		mock_session.temp = _noop_session
+		frappe.db.delete(
+			"NexWave Shopify Log",
+			{"shopify_store": self.store.name, "method": "sync_single_item_inventory"},
+		)
+		other_row_name = _append_item_shopify_store_row(
+			self.item_no_store_row.name,
+			self.store.name,
+			shopify_product_id="502",
+			shopify_variant_id="602",
+			shopify_inventory_item_id="7001",
+		)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test setup
+
+		try:
+			from nexwave_shopify_connector.nexwave_shopify.inventory import sync_single_item_inventory
+
+			sync_single_item_inventory(self.item.name, self.store.name)
+
+			mock_set.assert_not_called()
+			conflict_logs = frappe.get_all(
+				"NexWave Shopify Log",
+				filters={
+					"shopify_store": self.store.name,
+					"status": "Error",
+					"method": "sync_single_item_inventory",
+					"reference_doctype": "Item",
+				},
+				fields=["message", "reference_name"],
+			)
+			conflict_logs = [
+				log
+				for log in conflict_logs
+				if log.get("message", "").startswith("Inventory preparation conflict")
+			]
+			self.assertEqual(
+				{log.reference_name for log in conflict_logs},
+				{self.item.name, self.item_no_store_row.name},
+			)
+		finally:
+			frappe.db.delete("Item Shopify Store", {"name": other_row_name})
+			frappe.db.delete(
+				"NexWave Shopify Log",
+				{"shopify_store": self.store.name, "method": "sync_single_item_inventory"},
 			)
 			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test teardown
 
