@@ -10,6 +10,7 @@ Session.temp() context; no auth handling here.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,10 +22,7 @@ NODES_BATCH_SIZE = 250
 THROTTLE_MIN_AVAILABLE = 200  # pause below this; typical bucket is 1000
 DEFAULT_RESTORE_RATE = 50.0
 
-INVENTORY_SET_MUTATION = """
-mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
-  inventorySetQuantities(input: $input) {
-    inventoryAdjustmentGroup {
+INVENTORY_SET_RESPONSE_SELECTION = """    inventoryAdjustmentGroup {
       createdAt
       reason
       referenceDocumentUri
@@ -40,10 +38,23 @@ mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
       field
       message
       code
-    }
-  }
-}
+    }"""
+
+
+def _build_inventory_set_mutation(*, idempotent: bool) -> str:
+	idempotency_variable = ", $idempotencyKey: String!" if idempotent else ""
+	idempotency_directive = " @idempotent(key: $idempotencyKey)" if idempotent else ""
+	return f"""
+mutation inventorySetQuantities($input: InventorySetQuantitiesInput!{idempotency_variable}) {{
+  inventorySetQuantities(input: $input){idempotency_directive} {{
+{INVENTORY_SET_RESPONSE_SELECTION}
+  }}
+}}
 """
+
+
+INVENTORY_SET_MUTATION = _build_inventory_set_mutation(idempotent=False)
+IDEMPOTENT_INVENTORY_SET_MUTATION = _build_inventory_set_mutation(idempotent=True)
 
 VARIANT_NODES_QUERY = """
 query variantInventoryItems($ids: [ID!]!) {
@@ -58,6 +69,20 @@ query variantInventoryItems($ids: [ID!]!) {
   }
 }
 """
+
+
+def _uses_idempotent_inventory_set(api_version: str | None) -> bool:
+	"""Return whether the API version uses Shopify's idempotent inventory contract."""
+	if not api_version:
+		return False
+	if str(api_version).strip().lower() == "unstable":
+		return True
+
+	match = re.fullmatch(r"(\d{4})-(\d{2})", str(api_version))
+	if not match:
+		return False
+
+	return (int(match.group(1)), int(match.group(2))) >= (2026, 1)
 
 
 @dataclass
@@ -213,6 +238,8 @@ def set_inventory_batch(
 	store_name: str,
 	timestamp_iso: str,
 	logger=None,
+	api_version: str | None = None,
+	idempotency_key: str | None = None,
 ) -> BatchResult:
 	"""
 	Execute one inventorySetQuantities mutation for up to 250 quantities.
@@ -224,6 +251,9 @@ def set_inventory_batch(
 		store_name: For referenceDocumentUri.
 		timestamp_iso: For referenceDocumentUri.
 		logger: Optional frappe logger.
+		api_version: Effective Shopify Admin API version. Missing versions use
+			the legacy input shape for backward compatibility.
+		idempotency_key: Required for API versions from 2026-01 onward.
 
 	Returns:
 		BatchResult with per-item success/failure and throttle state.
@@ -244,11 +274,16 @@ def set_inventory_batch(
 			f"Chunk the input via _chunked() before calling."
 		)
 
+	uses_idempotent_contract = _uses_idempotent_inventory_set(api_version)
+	if uses_idempotent_contract and not idempotency_key:
+		raise ValueError(f"idempotency_key is required for Shopify API version {api_version}")
+
 	graphql_quantities = [
 		{
 			"inventoryItemId": f"gid://shopify/InventoryItem/{q['inventory_item_id']}",
 			"locationId": f"gid://shopify/Location/{q['location_id']}",
 			"quantity": int(q["qty"]),
+			**({"changeFromQuantity": None} if uses_idempotent_contract else {}),
 		}
 		for q in quantities
 	]
@@ -258,12 +293,17 @@ def set_inventory_batch(
 			"name": "available",
 			"reason": "correction",
 			"referenceDocumentUri": f"nexwave://inventory-sync/{store_name}/{timestamp_iso}",
-			"ignoreCompareQuantity": True,
 			"quantities": graphql_quantities,
 		}
 	}
+	mutation = INVENTORY_SET_MUTATION
+	if uses_idempotent_contract:
+		mutation = IDEMPOTENT_INVENTORY_SET_MUTATION
+		variables["idempotencyKey"] = idempotency_key
+	else:
+		variables["input"]["ignoreCompareQuantity"] = True
 
-	response = execute_graphql(INVENTORY_SET_MUTATION, variables)
+	response = execute_graphql(mutation, variables)
 
 	data = (response or {}).get("data") or {}
 	payload = data.get("inventorySetQuantities") or {}
