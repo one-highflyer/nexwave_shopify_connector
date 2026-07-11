@@ -1,3 +1,12 @@
+## [15.1.4](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.3...v15.1.4) (2026-07-11)
+
+
+### Bug Fixes
+
+* **inventory:** cache inventory ids by mapping row ([dda6e01](https://github.com/one-highflyer/nexwave_shopify_connector/commit/dda6e014ead4c91dd6742a73f0c9bc55239609e3))
+* **inventory:** dedupe duplicate inventory mapping rows ([995a5e7](https://github.com/one-highflyer/nexwave_shopify_connector/commit/995a5e7f1f581b5e1fd4e7b7fc7e26b4d5360291))
+* **inventory:** harden target ownership and API versioning ([9ffc9ff](https://github.com/one-highflyer/nexwave_shopify_connector/commit/9ffc9ffec8b8214c5642e0239468af872dc006bb))
+
 ## [15.1.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.2...v15.1.3) (2026-06-21)
 
 
