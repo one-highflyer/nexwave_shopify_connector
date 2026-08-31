@@ -1,3 +1,11 @@
+## [15.1.5](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.4...v15.1.5) (2026-08-31)
+
+
+### Bug Fixes
+
+* **order:** address item lookup review feedback ([f32008a](https://github.com/one-highflyer/nexwave_shopify_connector/commit/f32008ab7be54cc06752164c4c7ee35bc0646c02))
+* **order:** resolve line items by variant mapping ([50e6b5e](https://github.com/one-highflyer/nexwave_shopify_connector/commit/50e6b5ef403eafe338764999d294be070734581b))
+
 ## [15.1.4](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.1.3...v15.1.4) (2026-07-11)
 
 
