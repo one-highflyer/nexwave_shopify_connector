@@ -9,6 +9,7 @@ from frappe.utils import flt, nowdate
 from nexwave_shopify_connector.nexwave_shopify._inventory_test_fixtures import (
 	TEST_COMPANY,
 	_get_default_warehouse,
+	ensure_item_shopify_store_row,
 	ensure_test_item,
 	ensure_test_shopify_store,
 )
@@ -17,6 +18,7 @@ from nexwave_shopify_connector.nexwave_shopify.order import (
 	_create_or_update_address,
 	_create_sales_order,
 	_get_item_price,
+	_get_order_items,
 	_reserve_stock_for_draft_shopify_order,
 	_sync_customer,
 	cancel_order,
@@ -154,6 +156,164 @@ class TestGetItemPrice(FrappeTestCase):
 		rate = _get_item_price(line_item, taxes_inclusive=False)
 
 		self.assertEqual(flt(rate * 3, 2), 30.00)
+
+
+class TestOrderItemMapping(FrappeTestCase):
+	TEST_STORES = (
+		"_test-order-item-mapping.myshopify.com",
+		"_test-order-item-mapping-other.myshopify.com",
+	)
+	TEST_ITEMS = (
+		"_Test Shopify Historical Variant Item",
+		"_Test Shopify Duplicate Variant Item",
+		"_Test Shopify Direct SKU Item",
+		"_Test Shopify Other Store Item",
+		"_Test Shopify Disabled Mapping Item",
+		"legacy-variant-789",
+	)
+
+	def setUp(self):
+		super().setUp()
+		self.store = ensure_test_shopify_store(
+			shop_domain=self.TEST_STORES[0],
+			warehouse=_get_default_warehouse(),
+		)
+		self.item_code = self.TEST_ITEMS[0]
+		ensure_test_item(self.item_code)
+		ensure_item_shopify_store_row(
+			self.item_code,
+			self.store.name,
+			shopify_product_id="historical-product-123",
+			shopify_variant_id="historical-variant-456",
+		)
+		self.duplicate_item_code = self.TEST_ITEMS[1]
+		ensure_test_item(self.duplicate_item_code)
+		ensure_item_shopify_store_row(
+			self.duplicate_item_code,
+			self.store.name,
+			shopify_product_id="duplicate-product-123",
+			shopify_variant_id="duplicate-variant-456",
+		)
+
+	@classmethod
+	def tearDownClass(cls):
+		for item_code in cls.TEST_ITEMS:
+			frappe.db.delete("Bin", {"item_code": item_code})
+			frappe.db.delete("Stock Ledger Entry", {"item_code": item_code})
+			if frappe.db.exists("Item", item_code):
+				frappe.delete_doc("Item", item_code, force=True, ignore_missing=True)
+
+		for store_name in cls.TEST_STORES:
+			if frappe.db.exists("Shopify Store", store_name):
+				frappe.delete_doc("Shopify Store", store_name, force=True, ignore_missing=True)
+
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture cleanup
+		super().tearDownClass()
+
+	def get_order_items(self, **line_item_overrides):
+		line_item = {
+			"sku": "",
+			"product_id": "historical-product-123",
+			"variant_id": "historical-variant-456",
+			"title": "Historical item",
+			"quantity": 1,
+			"price": "10.00",
+			"discount_allocations": [],
+		}
+		line_item.update(line_item_overrides)
+		return _get_order_items(
+			{
+				"created_at": nowdate(),
+				"taxes_included": False,
+				"line_items": [line_item],
+			},
+			self.store,
+		)
+
+	def test_blank_historical_sku_uses_variant_mapping(self):
+		items = self.get_order_items(price="0.00")
+
+		self.assertEqual(items[0]["item_code"], self.item_code)
+
+	def test_unknown_sku_uses_variant_mapping(self):
+		items = self.get_order_items(sku="outdated-sku")
+
+		self.assertEqual(items[0]["item_code"], self.item_code)
+
+	def test_direct_sku_takes_priority_over_variant_mapping(self):
+		direct_item_code = self.TEST_ITEMS[2]
+		ensure_test_item(direct_item_code)
+
+		items = self.get_order_items(sku=direct_item_code)
+
+		self.assertEqual(items[0]["item_code"], direct_item_code)
+
+	def test_mapping_from_another_store_is_ignored(self):
+		other_store = ensure_test_shopify_store(
+			shop_domain=self.TEST_STORES[1],
+			warehouse=_get_default_warehouse(),
+		)
+		other_item_code = self.TEST_ITEMS[3]
+		ensure_test_item(other_item_code)
+		ensure_item_shopify_store_row(
+			other_item_code,
+			other_store.name,
+			shopify_product_id="other-store-product-123",
+			shopify_variant_id="other-store-variant-456",
+		)
+
+		with self.assertRaisesRegex(ValueError, "not found"):
+			self.get_order_items(
+				product_id="other-store-product-123",
+				variant_id="other-store-variant-456",
+			)
+
+	def test_disabled_mapping_is_ignored(self):
+		disabled_item_code = self.TEST_ITEMS[4]
+		ensure_test_item(disabled_item_code)
+		ensure_item_shopify_store_row(
+			disabled_item_code,
+			self.store.name,
+			shopify_product_id="disabled-product-123",
+			shopify_variant_id="disabled-variant-456",
+			enabled=0,
+		)
+
+		with self.assertRaisesRegex(ValueError, "not found"):
+			self.get_order_items(
+				product_id="disabled-product-123",
+				variant_id="disabled-variant-456",
+			)
+
+	def test_ambiguous_variant_mapping_raises(self):
+		ensure_item_shopify_store_row(
+			self.duplicate_item_code,
+			self.store.name,
+			shopify_product_id="historical-product-123",
+			shopify_variant_id="historical-variant-456",
+		)
+
+		try:
+			with self.assertRaisesRegex(ValueError, "Multiple items are mapped"):
+				self.get_order_items()
+		finally:
+			ensure_item_shopify_store_row(
+				self.duplicate_item_code,
+				self.store.name,
+				shopify_product_id="duplicate-product-123",
+				shopify_variant_id="duplicate-variant-456",
+			)
+
+	def test_variant_id_item_code_fallback_is_preserved(self):
+		legacy_item_code = self.TEST_ITEMS[5]
+		ensure_test_item(legacy_item_code)
+
+		items = self.get_order_items(
+			product_id="",
+			variant_id=legacy_item_code,
+		)
+
+		self.assertEqual(items[0]["item_code"], legacy_item_code)
 
 
 class TestSanitizePhoneNumber(FrappeTestCase):
