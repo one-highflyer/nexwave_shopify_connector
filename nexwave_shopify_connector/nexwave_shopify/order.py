@@ -1347,25 +1347,18 @@ def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 	delivery_date = getdate(order.get("created_at")) or nowdate()
 
 	for line_item in line_items:
-		sku = line_item.get("sku")
-		if not sku:
-			# Try variant ID or product ID as fallback
-			sku = cstr(line_item.get("variant_id") or line_item.get("product_id"))
-
-		# Find item by SKU
-		item_code = frappe.db.get_value("Item", {"name": sku})
-		if not item_code:
-			# Try item_code field
-			item_code = frappe.db.get_value("Item", {"item_code": sku})
+		sku = cstr(line_item.get("sku")).strip()
+		item_code = _resolve_order_item_code(line_item, store)
 
 		if not item_code:
+			identifier = sku or cstr(line_item.get("variant_id") or line_item.get("product_id"))
 			logger.error(
 				"Item with SKU '%s' not found. Order: %s, Line item: %s",
-				sku,
+				identifier,
 				order.get("name"),
 				line_item.get("title"),
 			)
-			raise ValueError(f"Item with SKU '{sku}' not found. Please create the item first.")
+			raise ValueError(f"Item with SKU '{identifier}' not found. Please create the item first.")
 
 		# Calculate item price
 		price = _get_item_price(line_item, taxes_inclusive)
@@ -1390,6 +1383,48 @@ def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 		)
 
 	return items
+
+
+def _resolve_order_item_code(line_item: dict, store) -> str | None:
+	"""Resolve an order line to an Item without relying only on its current SKU."""
+	sku = cstr(line_item.get("sku")).strip()
+	if item_code := _find_item_by_identifier(sku):
+		return item_code
+
+	variant_id = cstr(line_item.get("variant_id")).strip()
+	if variant_id:
+		mapped_items = set(
+			frappe.get_all(
+				"Item Shopify Store",
+				filters={
+					"parenttype": "Item",
+					"parentfield": "shopify_stores",
+					"shopify_store": store.name,
+					"shopify_variant_id": variant_id,
+					"enabled": 1,
+				},
+				pluck="parent",
+			)
+		)
+		if len(mapped_items) > 1:
+			raise ValueError(
+				f"Multiple items are mapped to Shopify variant '{variant_id}' for store '{store.name}'."
+			)
+		if mapped_items:
+			return mapped_items.pop()
+
+	# Keep support for stores that use a Shopify ID as the ERPNext item code.
+	fallback_identifier = variant_id or cstr(line_item.get("product_id")).strip()
+	return _find_item_by_identifier(fallback_identifier)
+
+
+def _find_item_by_identifier(identifier: str) -> str | None:
+	if not identifier:
+		return None
+
+	return frappe.db.get_value("Item", {"name": identifier}) or frappe.db.get_value(
+		"Item", {"item_code": identifier}
+	)
 
 
 def _is_stock_reservation_enabled() -> bool:
