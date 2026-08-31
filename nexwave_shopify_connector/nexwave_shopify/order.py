@@ -1330,7 +1330,7 @@ def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 	"""
 	Map Shopify line items to Sales Order items.
 
-	Raises exception if any SKU is not found.
+	Raises an exception if no item identifier resolves.
 
 	Args:
 		order: Shopify order data
@@ -1353,12 +1353,12 @@ def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 		if not item_code:
 			identifier = sku or cstr(line_item.get("variant_id") or line_item.get("product_id"))
 			logger.error(
-				"Item with SKU '%s' not found. Order: %s, Line item: %s",
+				"Item with identifier '%s' not found. Order: %s, Line item: %s",
 				identifier,
 				order.get("name"),
 				line_item.get("title"),
 			)
-			raise ValueError(f"Item with SKU '{identifier}' not found. Please create the item first.")
+			raise ValueError(f"Item with identifier '{identifier}' not found. Please create the item first.")
 
 		# Calculate item price
 		price = _get_item_price(line_item, taxes_inclusive)

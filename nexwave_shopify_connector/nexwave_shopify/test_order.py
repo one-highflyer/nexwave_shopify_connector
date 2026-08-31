@@ -159,13 +159,26 @@ class TestGetItemPrice(FrappeTestCase):
 
 
 class TestOrderItemMapping(FrappeTestCase):
+	TEST_STORES = (
+		"_test-order-item-mapping.myshopify.com",
+		"_test-order-item-mapping-other.myshopify.com",
+	)
+	TEST_ITEMS = (
+		"_Test Shopify Historical Variant Item",
+		"_Test Shopify Duplicate Variant Item",
+		"_Test Shopify Direct SKU Item",
+		"_Test Shopify Other Store Item",
+		"_Test Shopify Disabled Mapping Item",
+		"legacy-variant-789",
+	)
+
 	def setUp(self):
 		super().setUp()
 		self.store = ensure_test_shopify_store(
-			shop_domain="_test-order-item-mapping.myshopify.com",
+			shop_domain=self.TEST_STORES[0],
 			warehouse=_get_default_warehouse(),
 		)
-		self.item_code = "_Test Shopify Historical Variant Item"
+		self.item_code = self.TEST_ITEMS[0]
 		ensure_test_item(self.item_code)
 		ensure_item_shopify_store_row(
 			self.item_code,
@@ -173,7 +186,7 @@ class TestOrderItemMapping(FrappeTestCase):
 			shopify_product_id="historical-product-123",
 			shopify_variant_id="historical-variant-456",
 		)
-		self.duplicate_item_code = "_Test Shopify Duplicate Variant Item"
+		self.duplicate_item_code = self.TEST_ITEMS[1]
 		ensure_test_item(self.duplicate_item_code)
 		ensure_item_shopify_store_row(
 			self.duplicate_item_code,
@@ -181,6 +194,21 @@ class TestOrderItemMapping(FrappeTestCase):
 			shopify_product_id="duplicate-product-123",
 			shopify_variant_id="duplicate-variant-456",
 		)
+
+	@classmethod
+	def tearDownClass(cls):
+		for item_code in cls.TEST_ITEMS:
+			frappe.db.delete("Bin", {"item_code": item_code})
+			frappe.db.delete("Stock Ledger Entry", {"item_code": item_code})
+			if frappe.db.exists("Item", item_code):
+				frappe.delete_doc("Item", item_code, force=True, ignore_missing=True)
+
+		for store_name in cls.TEST_STORES:
+			if frappe.db.exists("Shopify Store", store_name):
+				frappe.delete_doc("Shopify Store", store_name, force=True, ignore_missing=True)
+
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- test fixture cleanup
+		super().tearDownClass()
 
 	def get_order_items(self, **line_item_overrides):
 		line_item = {
@@ -213,7 +241,7 @@ class TestOrderItemMapping(FrappeTestCase):
 		self.assertEqual(items[0]["item_code"], self.item_code)
 
 	def test_direct_sku_takes_priority_over_variant_mapping(self):
-		direct_item_code = "_Test Shopify Direct SKU Item"
+		direct_item_code = self.TEST_ITEMS[2]
 		ensure_test_item(direct_item_code)
 
 		items = self.get_order_items(sku=direct_item_code)
@@ -222,10 +250,10 @@ class TestOrderItemMapping(FrappeTestCase):
 
 	def test_mapping_from_another_store_is_ignored(self):
 		other_store = ensure_test_shopify_store(
-			shop_domain="_test-order-item-mapping-other.myshopify.com",
+			shop_domain=self.TEST_STORES[1],
 			warehouse=_get_default_warehouse(),
 		)
-		other_item_code = "_Test Shopify Other Store Item"
+		other_item_code = self.TEST_ITEMS[3]
 		ensure_test_item(other_item_code)
 		ensure_item_shopify_store_row(
 			other_item_code,
@@ -241,7 +269,7 @@ class TestOrderItemMapping(FrappeTestCase):
 			)
 
 	def test_disabled_mapping_is_ignored(self):
-		disabled_item_code = "_Test Shopify Disabled Mapping Item"
+		disabled_item_code = self.TEST_ITEMS[4]
 		ensure_test_item(disabled_item_code)
 		ensure_item_shopify_store_row(
 			disabled_item_code,
@@ -277,7 +305,7 @@ class TestOrderItemMapping(FrappeTestCase):
 			)
 
 	def test_variant_id_item_code_fallback_is_preserved(self):
-		legacy_item_code = "legacy-variant-789"
+		legacy_item_code = self.TEST_ITEMS[5]
 		ensure_test_item(legacy_item_code)
 
 		items = self.get_order_items(
