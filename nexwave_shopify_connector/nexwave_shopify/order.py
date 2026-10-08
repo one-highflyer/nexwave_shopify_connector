@@ -1378,6 +1378,7 @@ def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 				"warehouse": store.warehouse,
 				"cost_center": store.cost_center,
 				"shopify_item_discount": per_item_discount,
+				"shopify_line_item_id": cstr(line_item.get("id")),
 				"reserve_stock": cint(reserve_stock),
 			}
 		)

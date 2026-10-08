@@ -229,6 +229,19 @@
 	},
 	{
 		"doctype": "Custom Field",
+		"name": "Sales Order Item-shopify_line_item_id",
+		"dt": "Sales Order Item",
+		"fieldname": "shopify_line_item_id",
+		"fieldtype": "Data",
+		"insert_after": "shopify_item_discount",
+		"label": "Shopify Line Item ID",
+		"hidden": 1,
+		"read_only": 1,
+		"no_copy": 1,
+		"modified": "2026-10-08 00:00:00"
+	},
+	{
+		"doctype": "Custom Field",
 		"name": "Contact Phone-shopify_original_phone",
 		"dt": "Contact Phone",
 		"fieldname": "shopify_original_phone",

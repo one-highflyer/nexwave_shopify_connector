@@ -34,6 +34,7 @@ fixtures = [
 					"Sales Order-shopify_customer_note",
 					# Sales Order Item fields
 					"Sales Order Item-shopify_item_discount",
+					"Sales Order Item-shopify_line_item_id",
 					# Delivery Note fields
 					"Delivery Note-shopify_section",
 					"Delivery Note-shopify_store",

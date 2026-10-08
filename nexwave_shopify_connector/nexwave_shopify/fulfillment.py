@@ -3,7 +3,7 @@
 
 import frappe
 from frappe import _
-from frappe.utils import cstr
+from frappe.utils import cstr, flt
 
 from nexwave_shopify_connector.nexwave_shopify.utils import create_shopify_log
 from nexwave_shopify_connector.utils.logger import get_logger
@@ -421,82 +421,96 @@ def _get_fulfillment_items(
 	logger = get_logger()
 	dn_items = []
 
-	# Build SKU to SO item mapping
-	so_item_by_sku = {}
+	# Keep every order row; repeated SKUs can have different quantities and rates.
+	so_items_by_sku = {}
+	so_item_by_id = {}
 	for so_item in so_items:
-		item_code = so_item.item_code
-		# Get the SKU (item_code is used as SKU in the order sync)
-		so_item_by_sku[item_code] = so_item
+		so_items_by_sku.setdefault(so_item.item_code, []).append(so_item)
+		line_id = cstr(so_item.get("shopify_line_item_id")).strip()
+		if line_id:
+			if line_id in so_item_by_id:
+				raise ValueError(f"Duplicate Shopify line item ID '{line_id}' in Sales Order '{so_name}'.")
+			so_item_by_id[line_id] = so_item
 
-	# Get already-delivered quantities if auto_fulfill_remaining_qty is enabled
-	delivered_qty_map = {}
-	if store.auto_fulfill_remaining_qty:
-		delivered_qty_map = _get_delivered_qty_map(so_name)
+	# The outer gate still controls existing DNs in default mode. Refresh here
+	# because an earlier fulfillment in this payload may just have submitted a DN.
+	delivered_qty_map = _get_delivered_qty_map(so_name)
+	remaining_by_row = {
+		row.name: max(flt(row.qty) - flt(delivered_qty_map.get(row.name)), 0) for row in so_items
+	}
 
 	for f_item in fulfillment_items:
-		sku = f_item.get("sku")
-		if not sku:
-			# Try variant ID or product ID as fallback (matching order.py logic)
-			sku = cstr(f_item.get("variant_id") or f_item.get("product_id"))
+		qty = flt(f_item.get("quantity", 1))
+		if qty <= 0:
+			continue
 
-		qty = f_item.get("quantity", 1)
+		line_id = cstr(f_item.get("id")).strip()
+		if line_id and line_id in so_item_by_id:
+			# Identity survives changed SKUs and out-of-order partial fulfillments.
+			candidates = [so_item_by_id[line_id]]
+		else:
+			sku = cstr(f_item.get("sku")).strip()
+			if not sku:
+				sku = cstr(f_item.get("variant_id") or f_item.get("product_id"))
 
-		# Find matching SO item
-		if sku not in so_item_by_sku:
-			# Try to find by item_code lookup
-			item_code = frappe.db.get_value("Item", {"name": sku}) or frappe.db.get_value(
-				"Item", {"item_code": sku}
-			)
-			if item_code and item_code in so_item_by_sku:
-				sku = item_code
+			if sku not in so_items_by_sku:
+				item_code = frappe.db.get_value("Item", {"name": sku}) or frappe.db.get_value(
+					"Item", {"item_code": sku}
+				)
+				if item_code and item_code in so_items_by_sku:
+					sku = item_code
+				else:
+					logger.warning("SKU %s from fulfillment not found in Sales Order items", sku)
+					continue
+
+			# Older imports lack line IDs. Allocate those rows in order, without
+			# borrowing the price or capacity of a row with a different known ID.
+			candidates = [row for row in so_items_by_sku[sku] if not row.get("shopify_line_item_id")]
+			if not candidates:
+				raise ValueError(
+					f"Shopify fulfillment line '{line_id or '(missing ID)'}' does not match "
+					f"the stored line IDs for item '{sku}' in Sales Order '{so_name}'."
+				)
+
+		allocations = []
+		pending_qty = qty
+		for so_item in candidates:
+			allocated_qty = min(pending_qty, max(remaining_by_row[so_item.name], 0))
+			if allocated_qty > 0:
+				allocations.append((so_item, allocated_qty))
+				remaining_by_row[so_item.name] -= allocated_qty
+				pending_qty -= allocated_qty
+			if pending_qty <= 0:
+				break
+
+		if pending_qty > 0:
+			if store.auto_fulfill_remaining_qty:
+				logger.info(
+					"Capping fulfillment line %s by %s to remaining order quantity", line_id, pending_qty
+				)
 			else:
-				logger.warning(
-					"SKU %s from fulfillment not found in Sales Order items",
-					sku,
-				)
-				continue
+				# Preserve native over-delivery allowance/validation in default mode.
+				so_item = candidates[-1]
+				if allocations and allocations[-1][0].name == so_item.name:
+					allocations[-1] = (so_item, allocations[-1][1] + pending_qty)
+				else:
+					allocations.append((so_item, pending_qty))
+				remaining_by_row[so_item.name] -= pending_qty
 
-		so_item = so_item_by_sku[sku]
-
-		# Calculate remaining qty if setting is enabled
-		if store.auto_fulfill_remaining_qty:
-			already_delivered = delivered_qty_map.get(so_item.name, 0)
-			remaining_qty = so_item.qty - already_delivered
-
-			if remaining_qty <= 0:
-				logger.info(
-					"Skipping item %s - already fully delivered (ordered: %s, delivered: %s)",
-					so_item.item_code,
-					so_item.qty,
-					already_delivered,
-				)
-				continue
-
-			# Cap at remaining qty
-			if qty > remaining_qty:
-				logger.info(
-					"Capping qty for %s from %s to %s (already delivered: %s of %s)",
-					so_item.item_code,
-					qty,
-					remaining_qty,
-					already_delivered,
-					so_item.qty,
-				)
-				qty = remaining_qty
-
-		dn_items.append(
-			{
-				"item_code": so_item.item_code,
-				"item_name": so_item.item_name,
-				"description": so_item.description,
-				"qty": qty,
-				"rate": so_item.rate,
-				"warehouse": warehouse or store.warehouse,
-				"against_sales_order": so_item.parent,
-				"so_detail": so_item.name,
-				"cost_center": store.cost_center,
-			}
-		)
+		for so_item, allocated_qty in allocations:
+			dn_items.append(
+				{
+					"item_code": so_item.item_code,
+					"item_name": so_item.item_name,
+					"description": so_item.description,
+					"qty": allocated_qty,
+					"rate": so_item.rate,
+					"warehouse": warehouse or store.warehouse,
+					"against_sales_order": so_item.parent,
+					"so_detail": so_item.name,
+					"cost_center": store.cost_center,
+				}
+			)
 
 	return dn_items
 
