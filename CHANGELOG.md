@@ -1,3 +1,12 @@
+## [15.2.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.2...v15.2.3) (2026-11-01)
+
+
+### Bug Fixes
+
+* **shopify:** mask tokens in new audit history ([d243c5e](https://github.com/one-highflyer/nexwave_shopify_connector/commit/d243c5ef1bd411e35f07f5d21d38ea2661d11326))
+* **shopify:** preserve concurrent updates during OAuth reconnect ([8dada39](https://github.com/one-highflyer/nexwave_shopify_connector/commit/8dada39fa7cab4a025cbea3753d2d2b078cb2e17))
+* **shopify:** register API versions and encrypt OAuth tokens ([03eb165](https://github.com/one-highflyer/nexwave_shopify_connector/commit/03eb1653ffae1c631590b9753d8698d185cde079))
+
 ## [15.2.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.1...v15.2.2) (2026-11-01)
 
 
