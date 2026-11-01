@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 import frappe
 import requests
 from frappe import _
+from frappe.utils.password import set_encrypted_password
 
 from nexwave_shopify_connector.nexwave_shopify.connection import normalize_shop_domain
 from nexwave_shopify_connector.utils.logger import get_logger
@@ -231,12 +232,17 @@ def callback():
 
 	logger.info("OAuth token exchange successful for store %s", shopify_store)
 
-	# Save through the document so Password fields use encrypted storage.
-	store.access_token = access_token
-	store.connected_user = frappe.session.user
-	store.oauth_status = "Connected"
-	# A legacy plaintext token must not enter change history during replacement.
-	store.save(ignore_version=True)
+	# Lock the store before its credentials, matching normal password saves.
+	store.load_doc_before_save(raise_exception=True)
+	# Keep credentials encrypted without saving stale settings or recording token history.
+	set_encrypted_password(store.doctype, store.name, access_token, fieldname="access_token")
+	store.db_set(
+		{
+			"access_token": "*" * len(access_token),
+			"connected_user": frappe.session.user,
+			"oauth_status": "Connected",
+		}
+	)
 	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- OAuth callback: persist token before redirect
 
 	frappe.msgprint(_("Successfully connected to Shopify!"), indicator="green", alert=True)
