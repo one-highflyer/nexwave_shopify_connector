@@ -63,6 +63,9 @@ fixtures = [
 # Hook on document methods and events
 
 doc_events = {
+	"Version": {
+		"before_insert": "nexwave_shopify_connector.nexwave_shopify.audit.mask_token_history",
+	},
 	"Item": {
 		"on_update": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_shopify",
 		"after_insert": "nexwave_shopify_connector.nexwave_shopify.product.sync_item_to_shopify",
