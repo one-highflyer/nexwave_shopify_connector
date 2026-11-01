@@ -1,3 +1,10 @@
+## [15.2.2](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.1...v15.2.2) (2026-11-01)
+
+
+### Bug Fixes
+
+* **order:** add financial status fields to linked documents ([bd69d8d](https://github.com/one-highflyer/nexwave_shopify_connector/commit/bd69d8d76a323fdb51710c65e50b3fc5835c5132))
+
 ## [15.2.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.0...v15.2.1) (2026-10-26)
 
 
