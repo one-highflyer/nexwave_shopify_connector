@@ -4,7 +4,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from shopify.api_version import ApiVersion
+from shopify.api_version import ApiVersion, Release
 from shopify.collection import PaginatedIterator
 from shopify.resources import CustomCollection, Location, Product, Shop, SmartCollection
 from shopify.session import Session
@@ -206,16 +206,22 @@ class ShopifyStore(Document):
 		return (self.shop_domain, api_version, access_token)
 
 	def _init_shopify_api_versions(self):
-		"""Initialize Shopify API versions by fetching from Shopify."""
+		"""Register the selected API version with the installed Shopify SDK."""
 		if not ApiVersion.versions:
-			ApiVersion.fetch_known_versions()
+			ApiVersion.define_known_versions()
+		api_version = self.api_version or DEFAULT_API_VERSION
+		if api_version == "unstable":
+			if api_version not in ApiVersion.versions:
+				ApiVersion.define_known_versions()
+		elif api_version not in ApiVersion.versions:
+			ApiVersion.define_version(Release(api_version))
 
 	@frappe.whitelist()
 	def test_connection(self):
 		"""Test the Shopify API connection."""
 		logger = get_logger()
 		try:
-			# Fetch available API versions from Shopify
+			# Register the configured API version before opening the session.
 			self._init_shopify_api_versions()
 
 			auth_details = self._get_auth_details()
@@ -257,7 +263,7 @@ class ShopifyStore(Document):
 		logger = get_logger()
 		logger.info("Fetching locations from Shopify for store: %s", self.shop_domain)
 		try:
-			# Fetch available API versions from Shopify
+			# Register the configured API version before opening the session.
 			self._init_shopify_api_versions()
 
 			auth_details = self._get_auth_details()

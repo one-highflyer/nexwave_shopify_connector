@@ -231,11 +231,12 @@ def callback():
 
 	logger.info("OAuth token exchange successful for store %s", shopify_store)
 
-	# Store the token directly on the Shopify Store document
-	# Using db_set to avoid triggering validation (which might clear OAuth fields)
-	store.db_set("access_token", access_token)
-	store.db_set("connected_user", frappe.session.user)
-	store.db_set("oauth_status", "Connected")
+	# Save through the document so Password fields use encrypted storage.
+	store.access_token = access_token
+	store.connected_user = frappe.session.user
+	store.oauth_status = "Connected"
+	# A legacy plaintext token must not enter change history during replacement.
+	store.save(ignore_version=True)
 	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- OAuth callback: persist token before redirect
 
 	frappe.msgprint(_("Successfully connected to Shopify!"), indicator="green", alert=True)
