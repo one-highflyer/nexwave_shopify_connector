@@ -3,7 +3,7 @@
 
 import frappe
 from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note, make_sales_invoice
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests.utils import FrappeTestCase, change_settings
 
 from nexwave_shopify_connector.nexwave_shopify._auto_link_test_fixtures import (
 	make_item,
@@ -36,13 +36,19 @@ class TestOrderCancellation(FrappeTestCase):
 		frappe.db.rollback()
 		if self.store:
 			frappe.db.delete("NexWave Shopify Log", {"shopify_store": self.store.name})
-		for doctype, name in reversed(self.documents):
-			if not frappe.db.exists(doctype, name):
-				continue
-			doc = frappe.get_doc(doctype, name)
-			if doc.docstatus == 1:
-				doc.cancel()
-			frappe.delete_doc(doctype, name, force=True)
+		with change_settings("Accounts Settings", {"delete_linked_ledger_entries": 1}):
+			for doctype, name in reversed(self.documents):
+				if not frappe.db.exists(doctype, name):
+					continue
+				doc = frappe.get_doc(doctype, name)
+				if doc.docstatus == 1:
+					doc.cancel()
+				frappe.delete_doc(doctype, name, force=True)
+				if doctype in ("Sales Invoice", "Delivery Note"):
+					for ledger in ("GL Entry", "Payment Ledger Entry", "Stock Ledger Entry"):
+						self.assertFalse(
+							frappe.db.exists(ledger, {"voucher_type": doctype, "voucher_no": name})
+						)
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- remove fixtures committed by webhook logging
 
 	def make_linked_document(self, doctype):
@@ -50,7 +56,7 @@ class TestOrderCancellation(FrappeTestCase):
 		doc = mapper(self.order.name)
 		doc.shopify_store = self.store.name
 		doc.shopify_order_id = self.order.shopify_order_id
-		doc.insert()
+		doc.insert(set_name="_T-Shopify-Cancel-" + frappe.generate_hash(length=12))
 		self.documents.append((doc.doctype, doc.name))
 		doc.submit()
 		return doc
