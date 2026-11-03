@@ -24,6 +24,10 @@ New order imports retain Shopify line IDs for exact source-row resolution. Run t
 ### Product and Inventory Push
 Sync items from ERPNext to Shopify with configurable field mapping (standard fields and metafields). Push stock levels from ERPNext warehouses to Shopify locations with multi-location support.
 
+For active Product Bundles, stock sync calculates complete kit quantities from the available component stock in each mapped warehouse, after the store's reservation deductions. Repeated component rows are added together. All components must be enabled stock items with positive quantities in their stock units.
+
+Non-stock items without a valid active bundle are skipped with a warning, leaving their Shopify quantities unchanged. A valid kit with an unavailable component publishes zero. Changed Bins scans also recalculate mapped bundles when their components change. These rules apply to inventory publishing; delivery handling is unchanged.
+
 ### Configurable Tax Handling
 - "On Net Total" approach for clean, efficient tax calculation
 - Automatic zero-rated item detection with item tax template overrides
