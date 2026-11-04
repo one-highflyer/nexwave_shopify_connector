@@ -1,3 +1,10 @@
+# [15.3.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.3...v15.3.0) (2026-11-04)
+
+
+### Features
+
+* **inventory:** calculate bundle availability from component stock ([668548b](https://github.com/one-highflyer/nexwave_shopify_connector/commit/668548b6aecbd3bc1a5e45819d9513394af01b5a))
+
 ## [15.2.3](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.2...v15.2.3) (2026-11-01)
 
 
