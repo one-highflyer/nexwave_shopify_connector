@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 from collections import Counter
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import frappe
@@ -289,6 +290,11 @@ def sync_store_inventory(store_name: str, force: bool = False):
 			items_to_sync, skipped_backfill, errored_backfill = _resolve_inventory_item_ids(
 				store_name, items_to_sync, logger
 			)
+			target_owners = _build_inventory_target_owner_map(items_to_sync)
+			items_to_sync, skipped_definitions = _filter_inventory_items(
+				items_to_sync, location_mapping, qty_by_pair, store_name, "sync_store_inventory"
+			)
+			total_skip += skipped_definitions
 			total_skip += len(skipped_backfill)
 			total_error += len(errored_backfill)
 			# Log backfill failures as errors so the sync summary surfaces them
@@ -304,7 +310,6 @@ def sync_store_inventory(store_name: str, force: bool = False):
 					reference_name=item.get("item_code"),
 				)
 
-			target_owners = _build_inventory_target_owner_map(items_to_sync)
 			quantities_by_location, preparation_failures = _prepare_inventory_quantities(
 				location_mapping, items_to_sync, qty_by_pair, target_owners
 			)
@@ -618,6 +623,10 @@ def sync_items_inventory(
 			items_to_sync = [
 				item for item in resolved_store_items if item.get("item_code") in selected_item_codes
 			]
+			items_to_sync, skipped_definitions = _filter_inventory_items(
+				items_to_sync, location_mapping, qty_by_pair, store_name, method
+			)
+			stats["skipped"] += skipped_definitions
 			skipped_backfill = [
 				item for item in skipped_store_items if item.get("item_code") in selected_item_codes
 			]
@@ -809,7 +818,25 @@ def _get_changed_inventory_item_codes(
 		as_dict=True,
 	)
 
-	return sorted({row["item_code"] for row in [*bin_rows, *mapping_rows, *pending_rows]})
+	# Bundle parents have no Bin of their own. Recalculate mapped bundles on
+	# each scan so component stock and definition changes cannot be missed.
+	bundle_rows = frappe.db.sql(
+		"""
+		SELECT DISTINCT iss.parent AS item_code
+		FROM `tabItem Shopify Store` iss
+		JOIN `tabItem` item ON item.name = iss.parent
+		JOIN `tabProduct Bundle` bundle ON bundle.new_item_code = iss.parent
+		WHERE iss.shopify_store = %(store_name)s
+		  AND iss.enabled = 1
+		  AND iss.shopify_variant_id IS NOT NULL
+		  AND iss.shopify_variant_id != ''
+		  AND item.disabled = 0
+		  AND bundle.disabled = 0
+		""",
+		params,
+		as_dict=True,
+	)
+	return sorted({row["item_code"] for row in [*bin_rows, *mapping_rows, *pending_rows, *bundle_rows]})
 
 
 def _execute_batch_with_retry(
@@ -886,6 +913,101 @@ def _execute_batch_with_retry(
 def _bulk_get_stock_qty(
 	pairs: list[tuple[str, str]],
 	include_draft_order_reservations: bool = False,
+) -> dict[tuple[str, str], float | None]:
+	"""Return warehouse availability, or None when a non-stock item must be skipped."""
+	if not pairs:
+		return {}
+	item_codes = sorted({item_code for item_code, _warehouse in pairs})
+	items = {
+		row.name: row
+		for row in frappe.get_all(
+			"Item", filters={"name": ["in", item_codes]}, fields=["name", "is_stock_item", "disabled"]
+		)
+	}
+	components = {}
+	non_stock_codes = [code for code, item in items.items() if not item.is_stock_item and not item.disabled]
+	if non_stock_codes:
+		rows = frappe.db.sql(
+			"""
+			SELECT bundle.new_item_code, component.item_code, component.qty, component.uom,
+			       item.is_stock_item, item.disabled, item.stock_uom
+			FROM `tabProduct Bundle` bundle
+			JOIN `tabProduct Bundle Item` component ON component.parent = bundle.name
+			LEFT JOIN `tabItem` item ON item.name = component.item_code
+			WHERE bundle.disabled = 0 AND bundle.new_item_code IN %(item_codes)s
+			""",
+			{"item_codes": tuple(non_stock_codes)},
+			as_dict=True,
+		)
+		invalid = set()
+		for row in rows:
+			qty = flt(row.qty)
+			if (
+				not row.is_stock_item
+				or row.disabled
+				or not math.isfinite(qty)
+				or qty <= 0
+				or (row.uom and row.uom != row.stock_uom)
+			):
+				invalid.add(row.new_item_code)
+				continue
+			definition = components.setdefault(row.new_item_code, {})
+			definition[row.item_code] = definition.get(row.item_code, Decimal(0)) + Decimal(str(qty))
+		for code in invalid:
+			components.pop(code, None)
+
+	stock_pairs = set()
+	for code, warehouse in pairs:
+		item = items.get(code)
+		if item and not item.disabled and item.is_stock_item:
+			stock_pairs.add((code, warehouse))
+		elif code in components:
+			stock_pairs.update((component, warehouse) for component in components[code])
+	stock = _bulk_get_available_stock_qty(list(stock_pairs), include_draft_order_reservations)
+	result = {}
+	for code, warehouse in pairs:
+		item = items.get(code)
+		if item and not item.disabled and item.is_stock_item:
+			result[code, warehouse] = stock.get((code, warehouse), 0)
+		elif code in components:
+			result[code, warehouse] = min(
+				math.floor(Decimal(str(stock.get((component, warehouse), 0))) / qty)
+				for component, qty in components[code].items()
+			)
+		else:
+			result[code, warehouse] = None
+	return result
+
+
+def _filter_inventory_items(items, location_mapping, qty_by_pair, store_name, method):
+	"""Leave undefined non-stock items unchanged in Shopify and report their omission."""
+	eligible = []
+	skipped = 0
+	logged = set()
+	for item in items:
+		code = item["item_code"]
+		if any(
+			qty_by_pair.get((code, warehouse), 0) is not None for _location, warehouse in location_mapping
+		):
+			eligible.append(item)
+			continue
+		skipped += 1
+		if code not in logged:
+			create_shopify_log(
+				status="Warning",
+				method=method,
+				shopify_store=store_name,
+				message="Stock sync skipped: non-stock item has no valid active Product Bundle with stock components",
+				reference_doctype="Item",
+				reference_name=code,
+			)
+			logged.add(code)
+	return eligible, skipped
+
+
+def _bulk_get_available_stock_qty(
+	pairs: list[tuple[str, str]],
+	include_draft_order_reservations: bool = False,
 ) -> dict[tuple[str, str], float]:
 	"""Read available-for-sale quantity from tabBin for many (item_code, warehouse) pairs.
 
@@ -930,8 +1052,12 @@ def _bulk_get_stock_qty(
 	result: dict[tuple[str, str], float] = {}
 	for row in rows:
 		key = (row["item_code"], row["warehouse"])
-		available = flt(row["actual_qty"]) - flt(row["reserved_qty"]) - flt(draft_reserved_qty.get(key, 0))
-		result[key] = max(available, 0)
+		available = (
+			Decimal(str(flt(row["actual_qty"])))
+			- Decimal(str(flt(row["reserved_qty"])))
+			- Decimal(str(flt(draft_reserved_qty.get(key, 0))))
+		)
+		result[key] = float(max(available, Decimal(0)))
 	return result
 
 
@@ -1155,7 +1281,7 @@ def _build_inventory_target_owner_map(items: list[dict]) -> dict[str, set[str]]:
 def _prepare_inventory_quantities(
 	location_mapping: list[tuple[str, str]],
 	items: list[dict],
-	qty_by_pair: dict[tuple[str, str], float],
+	qty_by_pair: dict[tuple[str, str], float | None],
 	target_owners: dict[str, set[str]],
 ) -> tuple[dict[str, list[dict]], list[tuple[str, str]]]:
 	"""Prepare conflict-safe quantities for all configured Shopify locations."""
@@ -1171,7 +1297,9 @@ def _prepare_inventory_quantities(
 		item_code = str(item["item_code"])
 		for location_id, warehouse in location_mapping:
 			target_location_id = str(location_id)
-			raw_qty = qty_by_pair.get((item_code, warehouse), 0) or 0
+			raw_qty = qty_by_pair.get((item_code, warehouse), 0)
+			if raw_qty is None:
+				continue
 			qty = max(int(raw_qty), 0)
 			entry = {
 				"item_code": item_code,
@@ -1191,8 +1319,7 @@ def _prepare_inventory_quantities(
 		if len(owners) > 1:
 			if inv_item_id not in reported_owner_conflicts:
 				error_message = (
-					f"Multiple source items target Shopify inventory item {inv_item_id}: "
-					f"{', '.join(owners)}"
+					f"Multiple source items target Shopify inventory item {inv_item_id}: {', '.join(owners)}"
 				)
 				failures.extend((item_code, error_message) for item_code in owners)
 				reported_owner_conflicts.add(inv_item_id)
@@ -1352,9 +1479,9 @@ def get_stock_qty(
 	item_code: str,
 	warehouse: str,
 	include_draft_order_reservations: bool = False,
-) -> float:
+) -> float | None:
 	"""
-	Get available-for-sale stock quantity from ERPNext Bin.
+	Get available-for-sale warehouse stock, including Product Bundle components.
 
 	Available quantity is actual_qty minus submitted Sales Order reserved_qty.
 	When include_draft_order_reservations is enabled for a store, active draft
@@ -1365,28 +1492,11 @@ def get_stock_qty(
 		warehouse: Warehouse name
 
 	Returns:
-		Available quantity (0 if no bin exists or stock is fully reserved)
+		Available quantity, or None for a non-stock item without a valid active bundle.
 	"""
-	# Match the bulk path (_bulk_get_stock_qty).
-	# Future: this could be made configurable per Shopify Store.
-	bin_data = frappe.db.get_value(
-		"Bin",
-		{"item_code": item_code, "warehouse": warehouse},
-		["actual_qty", "reserved_qty"],
-		as_dict=True,
-	)
-	if not bin_data:
-		return 0
-	available = (
-		flt(bin_data.actual_qty)
-		- flt(bin_data.reserved_qty)
-		- (
-			flt(_get_draft_reserved_stock_qty(item_code, warehouse))
-			if include_draft_order_reservations
-			else 0
-		)
-	)
-	return max(available, 0)
+	return _bulk_get_stock_qty([(item_code, warehouse)], include_draft_order_reservations)[
+		item_code, warehouse
+	]
 
 
 def _get_draft_reserved_stock_qty(item_code: str, warehouse: str) -> float:
@@ -1539,6 +1649,9 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 					for store_item in resolved_store_items
 					if store_item.get("item_code") == item_code
 				]
+				items_payload, _skipped_definitions = _filter_inventory_items(
+					items_payload, location_mapping, qty_by_pair, store.name, "sync_single_item_inventory"
+				)
 				skipped = [
 					store_item
 					for store_item in skipped_store_items
