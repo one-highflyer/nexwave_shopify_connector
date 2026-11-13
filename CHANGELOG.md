@@ -1,3 +1,17 @@
+# [15.4.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.3.0...v15.4.0) (2026-11-13)
+
+
+### Bug Fixes
+
+* **inventory:** verify cache updates with current reads ([6dbde88](https://github.com/one-highflyer/nexwave_shopify_connector/commit/6dbde88e653b5461cbff306e55f20876fbb3ae84))
+* **shopify:** read image checkpoints under item locks ([976969c](https://github.com/one-highflyer/nexwave_shopify_connector/commit/976969c488ba7271ae23cbbb278a2bb26f5efeaf))
+* **shopify:** use native worker identity and route checks ([18fb24c](https://github.com/one-highflyer/nexwave_shopify_connector/commit/18fb24c9f6bd90260a06cf871912c67f4abe6e3e))
+
+
+### Features
+
+* **shopify:** add resumable image import and inventory recovery ([53bf834](https://github.com/one-highflyer/nexwave_shopify_connector/commit/53bf834a78c1cf6b7064d1c1b5f15651cb4a89f9))
+
 # [15.3.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.2.3...v15.3.0) (2026-11-04)
 
 
