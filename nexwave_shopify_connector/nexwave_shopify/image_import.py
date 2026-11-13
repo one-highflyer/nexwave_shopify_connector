@@ -144,7 +144,7 @@ def _mappings(store_name, item_name):
 
 
 def _mapping_signature(rows):
-	return [(r.name, r.enabled, r.shopify_product_id, r.shopify_variant_id) for r in rows]
+	return sorted((r.name, r.enabled, r.shopify_product_id, r.shopify_variant_id) for r in rows)
 
 
 def _request(method, url, **kwargs):
@@ -310,10 +310,11 @@ def _process_item(store, item_name, token):
 	frappe.db.rollback()
 	state = _claim_state(store.name, token)
 	_check_store(store.name)
-	frappe.db.get_value("Item", item_name, "name", for_update=True)
-	item = frappe.get_doc("Item", item_name)
+	# Read the Item and its children with current reads, not the Store check snapshot.
+	item = frappe.get_doc("Item", item_name, for_update=True)
 	item.check_permission("write")
-	if _mapping_signature(_mappings(store.name, item_name)) != _mapping_signature(rows):
+	current_rows = [row for row in item.shopify_stores if row.shopify_store == store.name]
+	if _mapping_signature(current_rows) != _mapping_signature(rows):
 		raise ImageImportError("The Item mapping changed during import. Run the import again.")
 	if item.disabled:
 		outcome = "disabled"

@@ -470,3 +470,82 @@ class TestImageImport(FrappeTestCase):
 		with Image.open(io.BytesIO(file_doc.get_content())) as saved:
 			self.assertEqual(saved.format, "JPEG")
 			self.assertFalse(saved.getexif())
+
+	def checkpoint_with_concurrent_change(self, item, read_sql, update_sql, old_value, new_value):
+		state = self.prepare()
+		original_isolation = frappe.db.sql("SELECT @@tx_isolation")[0][0]
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- end the synthetic transaction before changing isolation
+		frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+		original_check_store = importer._check_store
+		store_checks = 0
+		stale_snapshot_observed = False
+
+		def change_after_store_read(store_name):
+			nonlocal store_checks, stale_snapshot_observed
+			store = original_check_store(store_name)
+			store_checks += 1
+			if store_checks == 2:
+				self.assertEqual(frappe.db.sql(read_sql, (item.name,))[0][0] or "", old_value)
+				connection = frappe.db.get_connection()
+				try:
+					with connection.cursor() as cursor:
+						cursor.execute(update_sql, (new_value, item.name))
+					connection.commit()
+				finally:
+					connection.close()
+				# The same connection still has the earlier Store-check snapshot.
+				self.assertEqual(frappe.db.sql(read_sql, (item.name,))[0][0] or "", old_value)
+				stale_snapshot_observed = True
+			return store
+
+		try:
+			with patch.object(importer, "_check_store", side_effect=change_after_store_read):
+				result = self.run_import(state)
+			self.assertTrue(stale_snapshot_observed)
+			return result
+		finally:
+			frappe.db.rollback()
+			commands = {
+				"READ-UNCOMMITTED": "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED",
+				"READ-COMMITTED": "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+				"REPEATABLE-READ": "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+				"SERIALIZABLE": "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+			}
+			frappe.db.sql(commands[original_isolation])
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- end the synthetic transaction before changing isolation
+
+	def test_image_changed_after_store_check_is_not_overwritten(self):
+		item = self.item("A")
+		state = self.checkpoint_with_concurrent_change(
+			item,
+			"SELECT image FROM `tabItem` WHERE name = %s",
+			"UPDATE `tabItem` SET image = %s WHERE name = %s",
+			"",
+			"/files/concurrent-image.png",
+		)
+		self.assertEqual(frappe.db.get_value("Item", item.name, "image"), "/files/concurrent-image.png")
+		self.assertEqual(frappe.db.count("File", {"attached_to_name": item.name}), 0)
+		self.assertEqual(state["imported"], 0)
+		if state["status"] == "Failed":
+			# MariaDB 11.8 can reject a current read after a concurrent update with error 1020.
+			self.assertIn("QueryDeadlockError", state["error"])
+			self.assertEqual((state["cursor"], state["processed"]), ("", 0))
+		else:
+			self.assertEqual((state["status"], state["existing"]), ("Completed", 1))
+
+	def test_mapping_changed_after_store_check_is_rejected(self):
+		item = self.item("A")
+		state = self.checkpoint_with_concurrent_change(
+			item,
+			"SELECT shopify_variant_id FROM `tabItem Shopify Store` WHERE parent = %s",
+			"UPDATE `tabItem Shopify Store` SET shopify_variant_id = %s WHERE parent = %s",
+			"101",
+			"102",
+		)
+		self.assertEqual((state["status"], state["cursor"], state["processed"]), ("Failed", "", 0))
+		self.assertTrue("mapping changed" in state["error"] or "QueryDeadlockError" in state["error"])
+		self.assertFalse(frappe.db.get_value("Item", item.name, "image"))
+		self.assertEqual(frappe.db.count("File", {"attached_to_name": item.name}), 0)
+		self.assertEqual(
+			frappe.db.get_value("Item Shopify Store", {"parent": item.name}, "shopify_variant_id"), "102"
+		)
