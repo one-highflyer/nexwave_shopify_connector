@@ -646,3 +646,101 @@ class TestPendingInventorySync(FrappeTestCase):
 		self.assertNotEqual(requests[0]["idempotencyKey"], requests[1]["idempotencyKey"])
 		self.assertEqual(self._pending(), 0)
 		self.assertEqual(self._pending(other_row), 0)
+
+	def test_concurrently_disabled_mapping_with_unchanged_cache_is_not_retried(self):
+		from nexwave_shopify_connector.nexwave_shopify import inventory
+
+		self._set_cached_id("healthy-inventory")
+		other = ensure_test_item(self.OTHER_ITEM_CODE)
+		self._add_mapping(other.name, "second-variant", shopify_inventory_item_id="stale-inventory")
+		original_isolation = frappe.db.sql("SELECT @@tx_isolation")[0][0]
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- publish synthetic mappings for the second connection
+		frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+		cache_results = []
+		requests = []
+		original_cache = inventory._cache_inventory_item_id
+
+		def disable_during_lookup(variant_ids, **kwargs):
+			self.assertEqual(set(variant_ids), {"pending-variant-1", "second-variant"})
+			self.assertEqual(frappe.db.get_value("Item Shopify Store", self.row_name, "enabled"), 1)
+			connection = frappe.db.get_connection()
+			try:
+				with connection.cursor() as cursor:
+					cursor.execute(
+						"UPDATE `tabItem Shopify Store` SET enabled = 0 WHERE name = %s", (self.row_name,)
+					)
+				connection.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- simulate a committed mapping change in a separate connection
+			finally:
+				connection.close()
+			return {
+				"pending-variant-1": {"tracked": True, "inventory_item_id": "healthy-inventory"},
+				"second-variant": {"tracked": True, "inventory_item_id": "repaired-inventory"},
+			}
+
+		def check_cache_result(row, store_name, inventory_item_id, **kwargs):
+			if row["item_shopify_store_name"] != self.row_name:
+				return original_cache(row, store_name, inventory_item_id, **kwargs)
+			# These are the post-update filters used by the old helper. The
+			# unchanged cache ID still matches its earlier transaction snapshot.
+			self.assertEqual(inventory_item_id, row["shopify_inventory_item_id"])
+			self.assertTrue(
+				frappe.db.exists(
+					"Item Shopify Store",
+					{
+						"name": self.row_name,
+						"parent": row["item_code"],
+						"parenttype": "Item",
+						"parentfield": "shopify_stores",
+						"shopify_store": store_name,
+						"enabled": 1,
+						"shopify_variant_id": row["shopify_variant_id"],
+						"shopify_inventory_item_id": inventory_item_id,
+						"modified": row["mapping_modified"],
+					},
+				)
+			)
+			try:
+				result = original_cache(row, store_name, inventory_item_id, **kwargs)
+			except frappe.QueryDeadlockError:
+				# MariaDB 11.8 can reject the current read with error 1020.
+				# This must stop the run before any target is retried.
+				cache_results.append("QueryDeadlockError")
+				raise
+			cache_results.append(result)
+			return result
+
+		def respond(query, variables):
+			quantities = variables["input"]["quantities"]
+			requests.append(quantities)
+			for index, quantity in enumerate(quantities):
+				if quantity["inventoryItemId"].endswith("/stale-inventory"):
+					return self._invalid_response(index)
+			return self._noop_response()
+
+		self.shopify_fetch.side_effect = disable_during_lookup
+		try:
+			with self._real_batch_with_graphql_response(None) as graphql:
+				graphql.side_effect = respond
+				with patch.object(inventory, "_cache_inventory_item_id", side_effect=check_cache_result):
+					sync_store_inventory(self.store.name, force=True)
+			self.shopify_fetch.assert_called_once()
+			self.assertIn(cache_results, ([False], ["QueryDeadlockError"]))
+			for quantities in requests[1:]:
+				self.assertNotIn(
+					"gid://shopify/InventoryItem/healthy-inventory",
+					{q["inventoryItemId"] for q in quantities},
+				)
+			if cache_results == ["QueryDeadlockError"]:
+				self.assertEqual(len(requests), 1)
+			self.assertEqual(self._pending(), 1)
+		finally:
+			frappe.db.rollback()
+			commands = {
+				"READ-UNCOMMITTED": "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED",
+				"READ-COMMITTED": "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+				"REPEATABLE-READ": "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+				"SERIALIZABLE": "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+			}
+			frappe.db.sql(commands[original_isolation])
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- finish the synthetic isolation change before fixture cleanup
+		self.assertEqual(frappe.db.get_value("Item Shopify Store", self.row_name, "enabled"), 0)

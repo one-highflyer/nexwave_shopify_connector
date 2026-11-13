@@ -1392,7 +1392,8 @@ def _cache_inventory_item_id(item: dict, store_name: str, inventory_item_id: str
 		"Item Shopify Store", filters, "shopify_inventory_item_id", inventory_item_id, update_modified=False
 	)
 	filters["shopify_inventory_item_id"] = inventory_item_id
-	return bool(frappe.db.exists("Item Shopify Store", filters))
+	# A consistent read can still match the old mapping under REPEATABLE READ.
+	return bool(frappe.db.get_value("Item Shopify Store", filters, "name", for_update=True))
 
 
 def _persist_inventory_failures(
