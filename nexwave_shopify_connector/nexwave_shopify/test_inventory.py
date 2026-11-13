@@ -10,7 +10,7 @@ goal is to verify:
   - lazy backfill (cache write, skipped variants)
   - disabled store / bench config early returns
   - zero-qty items are included; negative qty is clamped
-  - last_inventory_sync is updated on completion and partial success only
+  - last_inventory_sync advances only after a successful scan
   - partial batch failures produce a Warning log
   - force=True bypasses the sync frequency check
   - store-level exceptions are logged without re-raising
@@ -141,6 +141,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 			self.store.name,
 			{
 				"last_inventory_sync": None,
+				"last_inventory_sync_attempt": None,
 				"inventory_sync_mode": "Full Inventory",
 			},
 			update_modified=False,
@@ -770,8 +771,8 @@ class TestSyncStoreInventory(FrappeTestCase):
 
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.Session")
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory.set_inventory_batch")
-	def test_partial_success_updates_last_sync(self, mock_set, mock_session):
-		"""Partial success (some items synced) should still update last_inventory_sync."""
+	def test_partial_success_keeps_last_sync(self, mock_set, mock_session):
+		"""Partial success must keep failed targets inside the next scan window."""
 		mock_session.temp = _noop_session
 		mock_set.return_value = BatchResult(
 			succeeded=[self.item_a.name],
@@ -783,7 +784,7 @@ class TestSyncStoreInventory(FrappeTestCase):
 		sync_store_inventory(self.store.name)
 
 		last_sync = frappe.db.get_value("Shopify Store", self.store.name, "last_inventory_sync")
-		self.assertIsNotNone(last_sync, "last_inventory_sync should be updated on partial success")
+		self.assertIsNone(last_sync, "Partial failure must not advance the scan cursor")
 
 	# --- C3: force=True / force=False behaviour ---
 

@@ -3,6 +3,7 @@
 
 frappe.ui.form.on("Shopify Store", {
 	refresh(frm) {
+		frm.trigger("show_image_import_progress");
 		// Show OAuth status (callback_url is set by backend on save)
 		if (frm.doc.auth_method === "OAuth") {
 			frm.trigger("show_oauth_status");
@@ -10,6 +11,37 @@ frappe.ui.form.on("Shopify Store", {
 
 		// Add custom buttons
 		if (!frm.is_new()) {
+			if (frm.doc.enabled && frm.perm.some((permission) => permission.write)) {
+				frm.add_custom_button(
+					__("Import Item Images from Shopify"),
+					() => {
+						if (frm.is_dirty()) {
+							frappe.msgprint(__("Save the store before importing images."));
+							return;
+						}
+						frappe.confirm(
+							__(
+								"Import missing primary images into existing mapped Items? Existing images are kept. The import runs in the background and resumes an interrupted run from its last completed Item."
+							),
+							() => {
+								frm.call({
+									method: "import_item_images",
+									doc: frm.doc,
+									freeze: true,
+									freeze_message: __("Starting image import..."),
+									callback(r) {
+										if (r.message) {
+											frm.doc.image_import_state = JSON.stringify(r.message);
+											frm.trigger("show_image_import_progress");
+										}
+									},
+								});
+							}
+						);
+					},
+					__("Sync")
+				);
+			}
 			// Show "Connect to Shopify" button for OAuth stores
 			if (frm.doc.auth_method === "OAuth" && frm.doc.client_id) {
 				frm.add_custom_button(
@@ -371,6 +403,55 @@ frappe.ui.form.on("Shopify Store", {
 				},
 			};
 		});
+	},
+
+	show_image_import_progress(frm) {
+		clearTimeout(frm._image_import_poll);
+		const field = frm.fields_dict.image_import_progress;
+		if (!field) return;
+		let state;
+		try {
+			state = JSON.parse(frm.doc.image_import_state || "{}");
+			if (!state || typeof state !== "object" || Array.isArray(state)) {
+				throw new Error("Invalid image import state");
+			}
+		} catch {
+			field.$wrapper.text(__("Image import progress is unavailable."));
+			return;
+		}
+		const escape = (value) => frappe.utils.escape_html(String(value || ""));
+		const count = (value) => Number(value) || 0;
+		const status = state.status || __("Not Started");
+		let html = `<p><strong>${__("Image import status")}:</strong> ${escape(__(status))}</p>`;
+		if (state.status) {
+			html += `<p>${__("Processed")}: ${count(state.processed)} · ${__("Imported")}: ${count(
+				state.imported
+			)} · ${__("Existing image")}: ${count(state.existing)} · ${__(
+				"No source image"
+			)}: ${count(state.no_image)} · ${__("Disabled")}: ${count(state.disabled)}</p>`;
+			if (state.cursor) {
+				html += `<p>${__("Last completed Item")}: ${escape(state.cursor)}</p>`;
+			}
+			if (state.error) {
+				html += `<p class="text-danger">${escape(state.current_item)}: ${escape(
+					state.error
+				)}</p>`;
+			}
+		}
+		field.$wrapper.html(html);
+		if (["Queued", "Running"].includes(state.status) && !frm.is_new()) {
+			const store_name = frm.doc.name;
+			frm._image_import_poll = setTimeout(() => {
+				if (cur_frm !== frm || frm.doc.name !== store_name) return;
+				frappe.db
+					.get_value("Shopify Store", store_name, "image_import_state")
+					.then((r) => {
+						if (cur_frm !== frm || frm.doc.name !== store_name || !r.message) return;
+						frm.doc.image_import_state = r.message.image_import_state;
+						frm.trigger("show_image_import_progress");
+					});
+			}, 5000);
+		}
 	},
 
 	company(frm) {

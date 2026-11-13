@@ -28,6 +28,16 @@ For active Product Bundles, stock sync calculates complete kit quantities from t
 
 Non-stock items without a valid active bundle are skipped with a warning, leaving their Shopify quantities unchanged. A valid kit with an unavailable component publishes zero. Changed Bins scans also recalculate mapped bundles when their components change. These rules apply to inventory publishing; delivery handling is unchanged.
 
+Failed scheduled inventory runs respect the store's sync interval. The last attempt time is separate from the successful stock scan cutoff, so a failed attempt does not skip pending stock changes. When Shopify rejects an inventory ID, the connector checks the exact mapped variants once, updates safe cached IDs, and retries unacknowledged healthy targets. Missing variants stay available for mapping review; the connector does not choose replacement SKUs or disable links.
+
+### Import Item Images from Shopify
+
+Use **Import Item Images from Shopify** on an enabled Shopify Store to fill blank primary images on its mapped Items. Existing images are preserved. The import uses the mapped variant image, or the first product image when the variant has none. Conflicting image sources or invalid mappings stop the import with an error on the Store.
+
+The import runs in the long queue in bounded chunks and saves progress after each completed Item. Use the same button to resume a failed run after correcting its cause. A killed worker can be resumed after its 11-minute recovery lease expires. Starting another import after completion scans again for newly mapped Items and missing images. This action is separate from **Enable Image Sync**, which sends images to Shopify.
+
+Run the normal site migration before using these changes to add the attempt time and image import checkpoint fields. Image imports require write permission on the Store and each affected Item.
+
 ### Configurable Tax Handling
 - "On Net Total" approach for clean, efficient tax calculation
 - Automatic zero-rated item detection with item tax template overrides

@@ -445,3 +445,204 @@ class TestPendingInventorySync(FrappeTestCase):
 			self.item.name,
 			_get_changed_inventory_item_codes(self.store, self.store.last_inventory_sync, now_datetime()),
 		)
+
+	def _set_cached_id(self, inventory_id="stale-inventory"):
+		frappe.db.set_value("Item Shopify Store", self.row_name, "shopify_inventory_item_id", inventory_id)
+
+	def _invalid_response(self, index=0):
+		return {
+			"data": {
+				"inventorySetQuantities": {
+					"inventoryAdjustmentGroup": None,
+					"userErrors": [
+						{
+							"field": ["input", "quantities", str(index), "inventoryItemId"],
+							"code": "INVALID_INVENTORY_ITEM",
+							"message": "The specified inventory item could not be found",
+						}
+					],
+				}
+			}
+		}
+
+	def test_invalid_cache_is_repaired_once_across_locations(self):
+		self._set_cached_id()
+		self._add_second_location()
+		with self._real_batch_with_graphql_response(self._noop_response()) as graphql:
+			graphql.side_effect = [self._invalid_response(), self._noop_response(), self._noop_response()]
+			sync_store_inventory(self.store.name, force=True)
+			self.assertEqual(graphql.call_count, 3)
+			requests = [call.args[1] for call in graphql.call_args_list]
+			self.assertNotEqual(requests[0]["idempotencyKey"], requests[1]["idempotencyKey"])
+			for request in requests[1:]:
+				self.assertEqual(
+					request["input"]["quantities"][0]["inventoryItemId"],
+					"gid://shopify/InventoryItem/inventory-pending-variant-1",
+				)
+		self.shopify_fetch.assert_called_once()
+		self.assertEqual(self._pending(), 0)
+		self.assertEqual(
+			frappe.db.get_value("Item Shopify Store", self.row_name, "shopify_inventory_item_id"),
+			"inventory-pending-variant-1",
+		)
+
+	def test_missing_variant_does_not_block_healthy_unacknowledged_rows(self):
+		self._set_cached_id()
+		other = ensure_test_item(self.OTHER_ITEM_CODE)
+		other_row = self._add_mapping(
+			other.name, "healthy-variant", shopify_inventory_item_id="healthy-inventory"
+		)
+		self.shopify_fetch.side_effect = lambda *args, **kwargs: {
+			"healthy-variant": {"tracked": True, "inventory_item_id": "healthy-inventory"}
+		}
+		requests = []
+
+		def respond(query, variables):
+			quantities = variables["input"]["quantities"]
+			requests.append(quantities)
+			for index, quantity in enumerate(quantities):
+				if quantity["inventoryItemId"].endswith("/stale-inventory"):
+					return self._invalid_response(index)
+			return self._noop_response()
+
+		with self._real_batch_with_graphql_response(None) as graphql:
+			graphql.side_effect = respond
+			sync_store_inventory(self.store.name, force=True)
+		self.assertEqual([len(rows) for rows in requests], [2, 1])
+		self.assertEqual(self._pending(), 1)
+		self.assertEqual(self._pending(other_row), 0)
+		self.assertIsNone(
+			frappe.db.get_value("Item Shopify Store", self.row_name, "shopify_inventory_item_id")
+		)
+		self.store.reload()
+		self.assertIsNone(self.store.last_inventory_sync)
+		self.assertIsNotNone(self.store.last_inventory_sync_attempt)
+
+	def test_second_invalid_result_stops_repair_and_keeps_pending(self):
+		self._set_cached_id()
+		self._add_second_location()
+		with self._real_batch_with_graphql_response(self._invalid_response()) as graphql:
+			sync_store_inventory(self.store.name, force=True)
+			self.assertEqual(graphql.call_count, 2)
+		self.shopify_fetch.assert_called_once()
+		self.assertEqual(self._pending(), 1)
+
+	def test_refresh_failure_preserves_cache_and_pending(self):
+		self._set_cached_id()
+		self.shopify_fetch.side_effect = ShopifyGraphQLError("Invalid lookup response", http_status=-1)
+		with self._real_batch_with_graphql_response(self._invalid_response()) as graphql:
+			sync_store_inventory(self.store.name, force=True)
+			graphql.assert_called_once()
+		self.assertEqual(
+			frappe.db.get_value("Item Shopify Store", self.row_name, "shopify_inventory_item_id"),
+			"stale-inventory",
+		)
+		self.assertEqual(self._pending(), 1)
+
+	def test_mapping_changed_during_refresh_is_not_overwritten(self):
+		self._set_cached_id()
+
+		def change_mapping(variant_ids, **kwargs):
+			frappe.db.set_value(
+				"Item Shopify Store",
+				self.row_name,
+				{
+					"shopify_variant_id": "replacement-variant",
+					"shopify_inventory_item_id": "replacement-inventory",
+				},
+			)
+			return self._fetch_inventory_ids(variant_ids)
+
+		self.shopify_fetch.side_effect = change_mapping
+		with self._real_batch_with_graphql_response(self._invalid_response()) as graphql:
+			sync_store_inventory(self.store.name, force=True)
+			graphql.assert_called_once()
+		self.assertEqual(
+			frappe.db.get_value("Item Shopify Store", self.row_name, "shopify_inventory_item_id"),
+			"replacement-inventory",
+		)
+		self.assertEqual(self._pending(), 1)
+
+	def test_refreshed_id_collision_with_unselected_item_is_not_sent(self):
+		self._set_cached_id()
+		other = ensure_test_item(self.OTHER_ITEM_CODE)
+		self._add_mapping(
+			other.name, "healthy-variant", shopify_inventory_item_id="inventory-pending-variant-1"
+		)
+		with self._real_batch_with_graphql_response(self._invalid_response()) as graphql:
+			stats = sync_items_inventory(self.store.name, [self.item.name], source="order_auto_link")
+			graphql.assert_called_once()
+		self.assertEqual(stats["synced"], 0)
+		self.assertEqual(stats["errors"], 1)
+		self.assertEqual(self._pending(), 1)
+
+	def test_failed_attempt_waits_for_interval_without_advancing_cursor(self):
+		from nexwave_shopify_connector.nexwave_shopify.inventory import _should_sync_inventory
+
+		self._set_store_values(inventory_sync_frequency=30)
+		self._set_cached_id()
+		with self._real_batch_with_graphql_response({"data": {}}):
+			sync_store_inventory(self.store.name)
+		self.store.reload()
+		attempt = self.store.last_inventory_sync_attempt
+		self.assertIsNotNone(attempt)
+		self.assertIsNone(self.store.last_inventory_sync)
+		for minutes, expected in ((10, False), (20, False), (30, True)):
+			with patch(
+				"nexwave_shopify_connector.nexwave_shopify.inventory.now_datetime",
+				return_value=add_to_date(attempt, minutes=minutes),
+			):
+				self.assertEqual(_should_sync_inventory(self.store), expected)
+
+	def test_full_sync_cursor_uses_start_time(self):
+		started = now_datetime()
+		later = add_to_date(started, minutes=5)
+		with patch(
+			"nexwave_shopify_connector.nexwave_shopify.inventory.now_datetime", side_effect=[started, later]
+		):
+			sync_store_inventory(self.store.name, force=True)
+		self.store.reload()
+		self.assertEqual(self.store.last_inventory_sync, started)
+		self.assertEqual(self.store.last_inventory_sync_attempt, started)
+
+	def test_targeted_sync_does_not_postpone_scheduled_run(self):
+		attempt = add_to_date(now_datetime(), minutes=-60)
+		self._set_store_values(last_inventory_sync_attempt=attempt)
+		sync_items_inventory(self.store.name, [self.item.name], source="order_auto_link")
+		self.store.reload()
+		self.assertEqual(self.store.last_inventory_sync_attempt, attempt)
+
+	def test_one_reported_invalid_target_refreshes_all_unacknowledged_targets(self):
+		self._set_cached_id()
+		other = ensure_test_item(self.OTHER_ITEM_CODE)
+		other_row = self._add_mapping(
+			other.name, "second-variant", shopify_inventory_item_id="second-stale-inventory"
+		)
+		self._add_second_location()
+		requests = []
+
+		def report_first_invalid(query, variables):
+			quantities = variables["input"]["quantities"]
+			requests.append(variables)
+			for index, quantity in enumerate(quantities):
+				if quantity["inventoryItemId"].endswith("stale-inventory"):
+					return self._invalid_response(index)
+			return self._noop_response()
+
+		with self._real_batch_with_graphql_response(None) as graphql:
+			graphql.side_effect = report_first_invalid
+			sync_store_inventory(self.store.name, force=True)
+			self.assertEqual(graphql.call_count, 3)
+		self.shopify_fetch.assert_called_once()
+		self.assertEqual(set(self.shopify_fetch.call_args.args[0]), {"pending-variant-1", "second-variant"})
+		for request in requests[1:]:
+			self.assertEqual(
+				{row["inventoryItemId"] for row in request["input"]["quantities"]},
+				{
+					"gid://shopify/InventoryItem/inventory-pending-variant-1",
+					"gid://shopify/InventoryItem/inventory-second-variant",
+				},
+			)
+		self.assertNotEqual(requests[0]["idempotencyKey"], requests[1]["idempotencyKey"])
+		self.assertEqual(self._pending(), 0)
+		self.assertEqual(self._pending(other_row), 0)

@@ -96,11 +96,26 @@ class ShopifyStore(Document):
 
 	# end: auto-generated types
 	def validate(self):
+		self.preserve_worker_state()
 		self.normalize_shop_domain()
 		self.normalize_shop_domain_alias()
 		self.validate_shop_domain_alias()
 		self.validate_auth_method()
 		self.validate_payment_method_mapping()
+
+	def preserve_worker_state(self):
+		"""Keep stale form saves from replacing committed worker checkpoints."""
+		if self.is_new():
+			return
+		state = frappe.db.get_value(
+			"Shopify Store",
+			self.name,
+			["image_import_state", "last_inventory_sync_attempt"],
+			as_dict=True,
+			for_update=True,
+		)
+		if state:
+			self.update(state)
 
 	def normalize_shop_domain(self):
 		"""Normalize shop domain to just the domain without protocol or trailing slashes."""
@@ -357,6 +372,13 @@ class ShopifyStore(Document):
 		from nexwave_shopify_connector.nexwave_shopify.product import sync_items_to_store
 
 		sync_items_to_store(self.name)
+
+	@frappe.whitelist(methods=["POST"])
+	def import_item_images(self):
+		"""Queue or resume an inbound image import using persisted store settings."""
+		from nexwave_shopify_connector.nexwave_shopify.image_import import enqueue_image_import
+
+		return enqueue_image_import(self.name)
 
 	@frappe.whitelist()
 	def sync_inventory(self):
