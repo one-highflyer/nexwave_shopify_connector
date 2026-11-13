@@ -55,12 +55,16 @@
   "inventory_sync_frequency",
   "column_break_inventory",
   "last_inventory_sync",
+  "last_inventory_sync_attempt",
   "warehouse_mapping",
   "section_break_item_sync",
   "enable_item_sync",
   "update_shopify_on_item_update",
   "enable_image_sync",
   "item_field_map",
+  "section_break_image_import",
+  "image_import_progress",
+  "image_import_state",
   "section_break_collections",
   "collection_mapping",
   "auto_create_collections",
@@ -544,6 +548,31 @@
    "fieldtype": "HTML",
    "label": "Webhook Help",
    "options": "<p class=\"text-muted\">These settings control which webhook events are registered with Shopify and processed when received. Disabling an event will unregister it from Shopify (on next webhook registration) and skip processing any incoming events of that type.</p>"
+  },
+  {
+   "fieldname": "last_inventory_sync_attempt",
+   "fieldtype": "Datetime",
+   "label": "Last Inventory Sync Attempt",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "The scheduled sync interval also applies after a failed attempt."
+  },
+  {
+   "fieldname": "section_break_image_import",
+   "fieldtype": "Section Break",
+   "label": "Images from Shopify"
+  },
+  {
+   "fieldname": "image_import_progress",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "image_import_state",
+   "fieldtype": "Long Text",
+   "label": "Image Import State",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1
   }
  ],
  "index_web_pages_for_search": 1,
@@ -562,7 +591,7 @@
    "link_fieldname": "shopify_store"
   }
  ],
- "modified": "2026-10-25 13:55:38.479810",
+ "modified": "2026-11-13 09:13:54.530806",
  "modified_by": "Administrator",
  "module": "NexWave Shopify",
  "name": "Shopify Store",

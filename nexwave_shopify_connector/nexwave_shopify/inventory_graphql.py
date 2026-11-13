@@ -138,6 +138,8 @@ class BatchResult:
 	failed: list[tuple[str, str]] = field(default_factory=list)  # (item_code, error)
 	throttle: ThrottleStatus = field(default_factory=ThrottleStatus)
 	raw_response: dict | None = None
+	failed_indexes: set[int] = field(default_factory=set)
+	invalid_inventory_item_indexes: set[int] = field(default_factory=set)
 
 
 class ShopifyGraphQLError(Exception):
@@ -335,6 +337,7 @@ def set_inventory_batch(
 	# a problem with "input.name") has no index and fails the whole batch.
 	failed_indexes: dict[int, list[str]] = {}
 	global_errors: list[str] = []
+	invalid_inventory_item_indexes: set[int] = set()
 	for err in user_errors:
 		if (
 			not isinstance(err, dict)
@@ -355,7 +358,11 @@ def set_inventory_batch(
 		full_msg = f"{code}: {message}" if code else message
 
 		quantity_index = None
-		if isinstance(field_path, list) and len(field_path) >= 3 and field_path[1] == "quantities":
+		if (
+			isinstance(field_path, list)
+			and len(field_path) >= 3
+			and field_path[:2] == ["input", "quantities"]
+		):
 			try:
 				quantity_index = int(field_path[2])
 			except (ValueError, TypeError):
@@ -373,6 +380,8 @@ def set_inventory_batch(
 			global_errors.append(full_msg)
 		else:
 			failed_indexes.setdefault(quantity_index, []).append(full_msg)
+			if code == "INVALID_INVENTORY_ITEM":
+				invalid_inventory_item_indexes.add(quantity_index)
 
 	succeeded: list[str] = []
 	failed: list[tuple[str, str]] = []
@@ -411,6 +420,12 @@ def set_inventory_batch(
 		failed=failed,
 		throttle=throttle,
 		raw_response=response,
+		failed_indexes=(
+			set(range(len(quantities)))
+			if global_errors or (adjustment_group is None and user_errors)
+			else set(failed_indexes)
+		),
+		invalid_inventory_item_indexes=invalid_inventory_item_indexes if not global_errors else set(),
 	)
 
 
@@ -448,28 +463,35 @@ def fetch_inventory_item_ids(
 	gids = [f"gid://shopify/ProductVariant/{vid}" for vid in variant_ids]
 	response = execute_graphql(VARIANT_NODES_QUERY, {"ids": gids})
 
-	data = (response or {}).get("data") or {}
-	nodes = data.get("nodes") or []
+	data = response.get("data") if isinstance(response, dict) else None
+	nodes = data.get("nodes") if isinstance(data, dict) else None
+	if not isinstance(nodes, list) or len(nodes) != len(gids):
+		raise ShopifyGraphQLError("Malformed variant lookup: incomplete nodes response", http_status=-1)
 
 	result: dict[str, dict] = {}
-	for node in nodes:
-		if not node or not isinstance(node, dict):
-			# Variant was deleted or not a ProductVariant; skipped
+	for expected_gid, node in zip(gids, nodes, strict=True):
+		if node is None:
 			continue
-		variant_gid = node.get("id") or ""
-		if not variant_gid:
-			continue
+		if not isinstance(node, dict) or node.get("id") != expected_gid:
+			raise ShopifyGraphQLError("Malformed variant lookup: unexpected variant node", http_status=-1)
+		variant_gid = node["id"]
 		# Extract numeric variant_id from gid://shopify/ProductVariant/<id>
 		variant_id = variant_gid.rsplit("/", 1)[-1]
 
-		inventory_item = node.get("inventoryItem") or {}
+		inventory_item = node.get("inventoryItem")
+		if not isinstance(inventory_item, dict) or not isinstance(inventory_item.get("tracked"), bool):
+			raise ShopifyGraphQLError("Malformed variant lookup: invalid inventory item", http_status=-1)
 		inventory_item_gid = (inventory_item or {}).get("id") or ""
 		# Defensive: only extract when the GID matches the expected prefix,
 		# so a malformed response can't produce a bogus numeric id.
-		if inventory_item_gid.startswith("gid://shopify/InventoryItem/"):
+		if (
+			isinstance(inventory_item_gid, str)
+			and inventory_item_gid.startswith("gid://shopify/InventoryItem/")
+			and inventory_item_gid.rsplit("/", 1)[-1]
+		):
 			inventory_item_id = inventory_item_gid.rsplit("/", 1)[-1] or None
 		else:
-			inventory_item_id = None
+			raise ShopifyGraphQLError("Malformed variant lookup: invalid inventory item ID", http_status=-1)
 
 		result[variant_id] = {
 			"inventory_item_id": inventory_item_id,

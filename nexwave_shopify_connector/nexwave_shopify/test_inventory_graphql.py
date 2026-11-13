@@ -565,6 +565,14 @@ class TestFetchInventoryItemIds(FrappeTestCase):
 		result = fetch_inventory_item_ids(["2001"])
 		self.assertFalse(result["2001"]["tracked"])
 
+	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.execute_graphql")
+	def test_malformed_nodes_are_not_treated_as_deleted_variants(self, mock_exec):
+		for response in ({}, {"data": {}}, {"data": {"nodes": []}}, {"data": {"nodes": [{}]}}):
+			with self.subTest(response=response):
+				mock_exec.return_value = response
+				with self.assertRaises(ShopifyGraphQLError):
+					fetch_inventory_item_ids(["2001"])
+
 
 class TestExecuteGraphql(FrappeTestCase):
 	@patch("nexwave_shopify_connector.nexwave_shopify.inventory_graphql.shopify")

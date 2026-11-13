@@ -101,13 +101,22 @@ def _should_sync_inventory(store) -> bool:
 	Returns:
 		True if sync should run
 	"""
-	if not store.last_inventory_sync:
+	last_attempt = store.get("last_inventory_sync_attempt") or store.last_inventory_sync
+	if not last_attempt:
 		return True
 
 	frequency_minutes = store.inventory_sync_frequency or 60
-	next_sync_time = add_to_date(store.last_inventory_sync, minutes=frequency_minutes)
+	next_sync_time = add_to_date(last_attempt, minutes=frequency_minutes)
 
 	return now_datetime() >= next_sync_time
+
+
+def _record_inventory_sync_attempt(store_name: str):
+	"""Persist the schedule clock before a store run can fail."""
+	started_at = now_datetime()
+	frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync_attempt", started_at)
+	frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background job attempt must survive failure
+	return started_at
 
 
 def _get_location_mapping(store) -> list[tuple[str, str]]:
@@ -209,15 +218,6 @@ def sync_store_inventory(store_name: str, force: bool = False):
 	if not store.enabled or not store.enable_inventory_sync:
 		return
 
-	# Check warehouse mappings
-	if not store.warehouse_mapping:
-		logger.error("No warehouse mappings configured for inventory sync for Shopify store: %s", store_name)
-		frappe.log_error(
-			title=f"Shopify Inventory Sync - {store_name}",
-			message="No warehouse mappings configured for inventory sync",
-		)
-		return
-
 	# Guard against duplicate jobs: with a single long-queue worker, duplicate
 	# jobs run sequentially. Re-check the sync interval with fresh DB data
 	# so that if a previous job already completed, this one skips. Manual
@@ -237,6 +237,16 @@ def sync_store_inventory(store_name: str, force: bool = False):
 		logger.warning("Inventory sync disabled via bench config for %s", store_name)
 		return
 
+	scan_started_at = _record_inventory_sync_attempt(store_name)
+
+	if not store.warehouse_mapping:
+		logger.error("No warehouse mappings configured for inventory sync for Shopify store: %s", store_name)
+		frappe.log_error(
+			title=f"Shopify Inventory Sync - {store_name}",
+			message="No warehouse mappings configured for inventory sync",
+		)
+		return
+
 	# Get auth details
 	api_version = _get_inventory_api_version(store.api_version)
 	_init_shopify_api_versions(api_version)
@@ -254,7 +264,7 @@ def sync_store_inventory(store_name: str, force: bool = False):
 
 	if not items_to_sync:
 		logger.warning("No items to sync for Shopify store: %s", store_name)
-		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
+		frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", scan_started_at)
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 		return
 
@@ -290,6 +300,7 @@ def sync_store_inventory(store_name: str, force: bool = False):
 			items_to_sync, skipped_backfill, errored_backfill = _resolve_inventory_item_ids(
 				store_name, items_to_sync, logger
 			)
+			resolved_store_items = items_to_sync
 			target_owners = _build_inventory_target_owner_map(items_to_sync)
 			items_to_sync, skipped_definitions = _filter_inventory_items(
 				items_to_sync, location_mapping, qty_by_pair, store_name, "sync_store_inventory"
@@ -322,6 +333,13 @@ def sync_store_inventory(store_name: str, force: bool = False):
 				message_prefix="Inventory preparation conflict",
 			)
 
+			recovery = _InventoryBatchRecovery(
+				store_name=store_name,
+				items=resolved_store_items,
+				quantities_by_location=quantities_by_location,
+				logger=logger,
+			)
+
 			for location_id, qty_entries in quantities_by_location.items():
 				if not qty_entries:
 					continue
@@ -330,7 +348,7 @@ def sync_store_inventory(store_name: str, force: bool = False):
 				for i, chunk in enumerate(_chunked(qty_entries, INVENTORY_BATCH_SIZE), start=1):
 					batch_t0 = time.monotonic()
 					try:
-						result = _execute_batch_with_retry(
+						result = recovery.execute(
 							chunk=chunk,
 							store_name=store_name,
 							timestamp_iso=timestamp_iso,
@@ -393,14 +411,10 @@ def sync_store_inventory(store_name: str, force: bool = False):
 			failed_item_codes,
 		)
 
-		# Only update last_inventory_sync when the run made actual progress
-		# (at least one item synced successfully). Zero-progress runs are
-		# either errors (bad token, schema failure) or config drift (every
-		# item has tracking disabled, variants deleted). In both cases we
-		# want the scheduler to retry next cycle rather than silently skip
-		# for the inventory_sync_frequency window.
-		if total_sync > 0:
-			frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", now_datetime())
+		# A full run also establishes the Changed Bins cursor. Keep failed targets
+		# in the next scan, and do not skip changes made while this run executes.
+		if total_sync > 0 and total_error == 0:
+			frappe.db.set_value("Shopify Store", store_name, "last_inventory_sync", scan_started_at)
 			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- background sync job: phased commit
 
 		# Determine overall status
@@ -461,14 +475,6 @@ def sync_changed_bin_inventory(store_name: str, force: bool = False):
 	if not store.enabled or not store.enable_inventory_sync:
 		return
 
-	if not store.warehouse_mapping:
-		logger.error("No warehouse mappings configured for inventory sync for Shopify store: %s", store_name)
-		frappe.log_error(
-			title=f"Shopify Inventory Sync - {store_name}",
-			message="No warehouse mappings configured for inventory sync",
-		)
-		return
-
 	if not force and not _should_sync_inventory(store):
 		logger.info(
 			"Skipping changed Bin inventory sync for %s, already synced at %s",
@@ -487,6 +493,16 @@ def sync_changed_bin_inventory(store_name: str, force: bool = False):
 		sync_store_inventory(store_name, force=True)
 		return
 
+	scan_started_at = _record_inventory_sync_attempt(store_name)
+
+	if not store.warehouse_mapping:
+		logger.error("No warehouse mappings configured for inventory sync for Shopify store: %s", store_name)
+		frappe.log_error(
+			title=f"Shopify Inventory Sync - {store_name}",
+			message="No warehouse mappings configured for inventory sync",
+		)
+		return
+
 	location_mapping = _get_location_mapping(store)
 	if not location_mapping:
 		logger.error("No valid location mappings for inventory sync for Shopify store: %s", store_name)
@@ -497,7 +513,6 @@ def sync_changed_bin_inventory(store_name: str, force: bool = False):
 		return
 
 	t0 = time.monotonic()
-	scan_started_at = now_datetime()
 	item_codes = _get_changed_inventory_item_codes(
 		store=store,
 		since=store.last_inventory_sync,
@@ -659,6 +674,13 @@ def sync_items_inventory(
 				message_prefix="Inventory preparation conflict",
 			)
 
+			recovery = _InventoryBatchRecovery(
+				store_name=store_name,
+				items=resolved_store_items,
+				quantities_by_location=quantities_by_location,
+				logger=logger,
+			)
+
 			for location_id, qty_entries in quantities_by_location.items():
 				if not qty_entries:
 					continue
@@ -667,7 +689,7 @@ def sync_items_inventory(
 				for i, chunk in enumerate(_chunked(qty_entries, INVENTORY_BATCH_SIZE), start=1):
 					batch_t0 = time.monotonic()
 					try:
-						result = _execute_batch_with_retry(
+						result = recovery.execute(
 							chunk=chunk,
 							store_name=store_name,
 							timestamp_iso=timestamp_iso,
@@ -837,6 +859,135 @@ def _get_changed_inventory_item_codes(
 		as_dict=True,
 	)
 	return sorted({row["item_code"] for row in [*bin_rows, *mapping_rows, *pending_rows, *bundle_rows]})
+
+
+class _InventoryBatchRecovery:
+	"""Repair each invalid cached target at most once during a sync run."""
+
+	def __init__(self, *, store_name, items, quantities_by_location, logger):
+		self.store_name = store_name
+		self.items = items
+		self.quantities_by_location = quantities_by_location
+		self.logger = logger
+		self.checked_ids = set()
+		self.blocked_ids = {}
+
+	def _refresh(self, inventory_ids):
+		self.checked_ids.update(inventory_ids)
+		rows = [item for item in self.items if str(item.get("shopify_inventory_item_id")) in inventory_ids]
+		by_variant = {}
+		for row in rows:
+			by_variant.setdefault(str(row["shopify_variant_id"]), []).append(row)
+		lookup = {}
+		try:
+			for variant_ids in _chunked(list(by_variant), NODES_BATCH_SIZE):
+				lookup.update(fetch_inventory_item_ids(variant_ids, logger=self.logger))
+		except ShopifyGraphQLError as error:
+			for inventory_id in inventory_ids:
+				self.blocked_ids[inventory_id] = f"Inventory ID refresh failed: {error}"
+			return
+
+		replacements = {inventory_id: set() for inventory_id in inventory_ids}
+		for row in rows:
+			old_id = str(row["shopify_inventory_item_id"])
+			info = lookup.get(str(row["shopify_variant_id"]))
+			new_id = str(info["inventory_item_id"]) if info and info.get("inventory_item_id") else None
+			if not info:
+				if _cache_inventory_item_id(row, self.store_name, None, logger=self.logger):
+					row["shopify_inventory_item_id"] = None
+				self.blocked_ids[old_id] = "Shopify variant no longer exists; review the item mapping"
+			elif not info.get("tracked") or not new_id:
+				if _cache_inventory_item_id(row, self.store_name, None, logger=self.logger):
+					row["shopify_inventory_item_id"] = None
+				self.blocked_ids[old_id] = "Shopify variant has no tracked inventory item"
+			elif not _cache_inventory_item_id(row, self.store_name, new_id, logger=self.logger):
+				self.blocked_ids[old_id] = "Item mapping changed during inventory ID refresh"
+			else:
+				row["shopify_inventory_item_id"] = new_id
+				replacements[old_id].add(new_id)
+				self.checked_ids.add(new_id)
+
+		resolved_ids = {}
+		for old_id, replacement_ids in replacements.items():
+			if old_id in self.blocked_ids:
+				continue
+			if len(replacement_ids) != 1:
+				self.blocked_ids[old_id] = "Inventory ID refresh did not resolve one safe target"
+				continue
+			resolved_ids[old_id] = next(iter(replacement_ids))
+		for quantities in self.quantities_by_location.values():
+			for quantity in quantities:
+				old_id = str(quantity["inventory_item_id"])
+				if old_id in resolved_ids:
+					quantity["inventory_item_id"] = resolved_ids[old_id]
+
+		# Check the whole store snapshot, including rows outside this batch.
+		owners = _build_inventory_target_owner_map(self.items)
+		for inventory_id, item_codes in owners.items():
+			if len(item_codes) > 1:
+				self.blocked_ids[inventory_id] = "Refreshed inventory ID belongs to multiple source items"
+		for quantities in self.quantities_by_location.values():
+			counts = Counter(str(quantity["inventory_item_id"]) for quantity in quantities)
+			for inventory_id, count in counts.items():
+				if count > 1:
+					self.blocked_ids[inventory_id] = (
+						"Refreshed inventory ID creates duplicate quantity targets"
+					)
+
+	def execute(self, chunk, **kwargs):
+		blocked = [
+			(q["item_code"], self.blocked_ids[str(q["inventory_item_id"])])
+			for q in chunk
+			if str(q["inventory_item_id"]) in self.blocked_ids
+		]
+		active = [q for q in chunk if str(q["inventory_item_id"]) not in self.blocked_ids]
+		if not active:
+			return BatchResult(failed=blocked)
+		result = _execute_batch_with_retry(chunk=active, **kwargs)
+		invalid_ids = {
+			str(active[index]["inventory_item_id"]) for index in result.invalid_inventory_item_indexes
+		}
+		if not invalid_ids:
+			result.failed.extend(blocked)
+			return result
+		# Shopify can report only the first invalid target. Check every
+		# unacknowledged target before the one repair mutation, so a second
+		# stale cache does not block the rest of this batch again.
+		refresh_ids = {
+			str(active[index]["inventory_item_id"]) for index in result.failed_indexes
+		} - self.checked_ids
+		for inventory_id in invalid_ids & self.checked_ids:
+			self.blocked_ids[inventory_id] = "Inventory item remains invalid after one refresh"
+		if refresh_ids:
+			self._refresh(refresh_ids)
+		# Only retry rows not acknowledged by the first request. A null group
+		# with user errors leaves every row unacknowledged, including healthy rows.
+		retry_rows = []
+		retained_failures = list(blocked)
+		for index in sorted(result.failed_indexes):
+			quantity = active[index]
+			error = self.blocked_ids.get(str(quantity["inventory_item_id"]))
+			if error:
+				retained_failures.append((quantity["item_code"], error))
+			else:
+				retry_rows.append(quantity)
+		if not retry_rows:
+			return BatchResult(succeeded=result.succeeded, failed=retained_failures, throttle=result.throttle)
+		try:
+			# A changed payload needs a new key; the transport helper owns that key.
+			retried = _execute_batch_with_retry(chunk=retry_rows, **kwargs)
+		except ShopifyGraphQLError as error:
+			retained_failures.extend((q["item_code"], str(error)) for q in retry_rows)
+			return BatchResult(succeeded=result.succeeded, failed=retained_failures, throttle=result.throttle)
+		for index in retried.invalid_inventory_item_indexes:
+			inventory_id = str(retry_rows[index]["inventory_item_id"])
+			self.checked_ids.add(inventory_id)
+			self.blocked_ids[inventory_id] = "Inventory item remains invalid after one refresh"
+		return BatchResult(
+			succeeded=result.succeeded + retried.succeeded,
+			failed=retained_failures + retried.failed,
+			throttle=retried.throttle,
+		)
 
 
 def _execute_batch_with_retry(
@@ -1199,7 +1350,9 @@ def _resolve_inventory_item_ids(
 
 			for item in variant_items:
 				# Cache the inventory_item_id back to the DB for next time
-				_cache_inventory_item_id(item, store_name, str(inv_item_id), logger=logger)
+				if not _cache_inventory_item_id(item, store_name, str(inv_item_id), logger=logger):
+					errored.append({**item, "_error_reason": "Mapping changed during inventory lookup"})
+					continue
 
 				enriched = dict(item)
 				enriched["shopify_inventory_item_id"] = str(inv_item_id)
@@ -1220,30 +1373,27 @@ def _get_item_codes_requiring_inventory_cache_recheck(items: list[dict]) -> set[
 	return {item_code for item_code, row_count in rows_by_item_code.items() if row_count > 1}
 
 
-def _cache_inventory_item_id(item: dict, store_name: str, inventory_item_id: str, logger=None) -> None:
-	"""Cache the Shopify inventory_item_id back to Item Shopify Store.
-
-	Uses frappe.db.set_value (not get_doc + save) to bypass on_update hooks
-	and avoid recursion into product sync. Matches the pattern in
-	shopify_store._upsert_item_store_mapping.
-	"""
-	row_name = item.get("item_shopify_store_name")
-	if not row_name:
-		if logger:
-			logger.warning(
-				"Skipping inventory_item_id cache for %s in store %s because the mapping row is missing",
-				item.get("item_code"),
-				store_name,
-			)
-		return
-
+def _cache_inventory_item_id(item: dict, store_name: str, inventory_item_id: str | None, logger=None) -> bool:
+	"""Update only the mapping snapshot used for the Shopify lookup."""
+	if not item.get("item_shopify_store_name"):
+		return False
+	filters = {
+		"name": item["item_shopify_store_name"],
+		"parent": item["item_code"],
+		"parenttype": "Item",
+		"parentfield": "shopify_stores",
+		"shopify_store": store_name,
+		"enabled": 1,
+		"shopify_variant_id": item["shopify_variant_id"],
+		"shopify_inventory_item_id": item.get("shopify_inventory_item_id"),
+		"modified": item["mapping_modified"],
+	}
 	frappe.db.set_value(
-		"Item Shopify Store",
-		row_name,
-		"shopify_inventory_item_id",
-		inventory_item_id,
-		update_modified=False,
+		"Item Shopify Store", filters, "shopify_inventory_item_id", inventory_item_id, update_modified=False
 	)
+	filters["shopify_inventory_item_id"] = inventory_item_id
+	# A consistent read can still match the old mapping under REPEATABLE READ.
+	return bool(frappe.db.get_value("Item Shopify Store", filters, "name", for_update=True))
 
 
 def _persist_inventory_failures(
@@ -1697,11 +1847,18 @@ def sync_single_item_inventory(item_code: str, store_name: str | None = None):
 					message_prefix="Inventory preparation conflict",
 				)
 
+				recovery = _InventoryBatchRecovery(
+					store_name=store.name,
+					items=resolved_store_items,
+					quantities_by_location=quantities_by_location,
+					logger=logger,
+				)
+
 				for location_id, qty_entries in quantities_by_location.items():
 					if not qty_entries:
 						continue
 					try:
-						result = _execute_batch_with_retry(
+						result = recovery.execute(
 							chunk=qty_entries,
 							store_name=store.name,
 							timestamp_iso=timestamp_iso,
