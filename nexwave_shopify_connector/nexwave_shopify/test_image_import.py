@@ -69,7 +69,7 @@ class TestImageImport(FrappeTestCase):
 		for store in self.stores:
 			if frappe.db.exists("Shopify Store", store.name):
 				frappe.delete_doc("Shopify Store", store.name, ignore_permissions=True, force=True)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 		super().tearDown()
 
 	def item(self, suffix, **values):
@@ -114,7 +114,7 @@ class TestImageImport(FrappeTestCase):
 		}
 		importer._new_attempt(state)
 		importer._write_state(self.store.name, state)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 		return state
 
 	def run_import(self, state=None):
@@ -159,7 +159,7 @@ class TestImageImport(FrappeTestCase):
 		self.http.side_effect = self.request
 		importer._new_attempt(state)
 		importer._write_state(self.store.name, state)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 		state = self.run_import(state)
 		self.assertEqual((state["status"], state["processed"], state["imported"]), ("Completed", 2, 2))
 		self.assertEqual(frappe.db.count("File", {"attached_to_name": first.name}), 1)
@@ -196,13 +196,25 @@ class TestImageImport(FrappeTestCase):
 		self.assertEqual(importer._read_state(self.store.name)["attempt_token"], state["attempt_token"])
 		self.http.assert_not_called()
 
+	def test_worker_rejects_a_different_requesting_user(self):
+		item = self.item("A")
+		state = self.prepare()
+		state["requested_by"] = "Guest"
+		importer._write_state(self.store.name, state)
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic request identity must survive the worker claim
+		state = self.run_import(state)
+		self.assertEqual((state["status"], state["cursor"], state["processed"]), ("Failed", "", 0))
+		self.assertEqual(frappe.session.user, "Administrator")
+		self.assertFalse(frappe.db.get_value("Item", item.name, "image"))
+		self.http.assert_not_called()
+
 	def test_concurrent_image_is_preserved(self):
 		item = self.item("A")
 
 		def set_image(method, url, **kwargs):
 			if method == "GET":
 				frappe.db.set_value("Item", item.name, "image", "/files/user-image.png")
-				frappe.db.commit()
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 			return self.request(method, url, **kwargs)
 
 		self.http.side_effect = set_image
@@ -250,18 +262,18 @@ class TestImageImport(FrappeTestCase):
 			importer._write_state(self.store.name, first)
 			resumed = importer.enqueue_image_import(self.store.name)
 			self.assertNotEqual(first["attempt_token"], resumed["attempt_token"])
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 			state = self.run_import(resumed)
 			self.assertEqual(state["status"], "Completed")
 			self.item("B", variant="102")
 			fresh = importer.enqueue_image_import(self.store.name)
 			self.assertNotEqual(fresh["run_id"], state["run_id"])
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 			state = self.run_import(fresh)
 			self.assertEqual((state["existing"], state["imported"]), (1, 1))
 
 	def test_guest_cannot_start_import(self):
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 		with self.set_user("Guest"), self.assertRaises(frappe.PermissionError):
 			importer.enqueue_image_import(self.store.name)
 
@@ -289,7 +301,7 @@ class TestImageImport(FrappeTestCase):
 		self.assertEqual(frappe.db.count("File", {"attached_to_name": item.name}), 0)
 		importer._new_attempt(result)
 		importer._write_state(self.store.name, result)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 		self.assertEqual(self.run_import(result)["imported"], 1)
 
 	def test_store_disabled_during_download_stops_checkpoint(self):
@@ -298,7 +310,7 @@ class TestImageImport(FrappeTestCase):
 		def disable_store(method, url, **kwargs):
 			if method == "GET":
 				frappe.db.set_value("Shopify Store", self.store.name, "enabled", 0)
-				frappe.db.commit()
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 			return self.request(method, url, **kwargs)
 
 		self.http.side_effect = disable_store
@@ -355,7 +367,7 @@ class TestImageImport(FrappeTestCase):
 		state = self.prepare()
 		state["requested_by"] = user.name
 		importer._write_state(self.store.name, state)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- synthetic state must survive worker transaction boundaries
 		with self.set_user(user.name):
 			self.assertFalse(frappe.has_permission("Item", "write", doc=denied.name))
 			self.assertTrue(frappe.has_permission("Item", "write", doc=allowed.name))

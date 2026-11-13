@@ -441,12 +441,21 @@ frappe.ui.form.on("Shopify Store", {
 		field.$wrapper.html(html);
 		if (["Queued", "Running"].includes(state.status) && !frm.is_new()) {
 			const store_name = frm.doc.name;
+			const is_current_store = () => {
+				const route = frappe.get_route();
+				return (
+					route[0] === "Form" &&
+					route[1] === "Shopify Store" &&
+					route[2] === store_name &&
+					frm.doc.name === store_name
+				);
+			};
 			frm._image_import_poll = setTimeout(() => {
-				if (cur_frm !== frm || frm.doc.name !== store_name) return;
+				if (!is_current_store()) return;
 				frappe.db
 					.get_value("Shopify Store", store_name, "image_import_state")
 					.then((r) => {
-						if (cur_frm !== frm || frm.doc.name !== store_name || !r.message) return;
+						if (!is_current_store() || !r.message) return;
 						frm.doc.image_import_state = r.message.image_import_state;
 						frm.trigger("show_image_import_progress");
 					});

@@ -342,7 +342,8 @@ def run_image_import(store_name, attempt_token):
 		state["lease_until"] = str(add_to_date(now_datetime(), seconds=LEASE_SECONDS))
 		_write_state(store_name, state)
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit -- claim worker attempt
-		frappe.set_user(state["requested_by"])
+		if frappe.session.user != state["requested_by"]:
+			frappe.throw(_("The image import must run as its requesting user."), frappe.PermissionError)
 		store = _check_store(store_name)
 		started = time.monotonic()
 		while time.monotonic() - started < CHUNK_SECONDS:
