@@ -1,3 +1,10 @@
+## [15.4.1](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.4.0...v15.4.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **order:** preserve fully discounted Shopify lines ([b2a3c80](https://github.com/one-highflyer/nexwave_shopify_connector/commit/b2a3c805ef37f252ccd36f30e20a347b1d528d26))
+
 # [15.4.0](https://github.com/one-highflyer/nexwave_shopify_connector/compare/v15.3.0...v15.4.0) (2026-11-13)
 
 
