@@ -1,6 +1,7 @@
 # Copyright (c) 2024, HighFlyer and contributors
 # For license information, please see license.txt
 
+from decimal import Decimal
 from typing import Optional
 
 import frappe
@@ -1382,22 +1383,36 @@ def _get_order_items(order: dict, store, reserve_stock: bool = False) -> list:
 		# Calculate per-item discount
 		total_discount = _get_total_discount(line_item)
 		qty = cint(line_item.get("quantity")) or 1
-		per_item_discount = total_discount / qty if qty else 0
+		per_item_discount = float(total_discount / qty)
 
-		items.append(
-			{
-				"item_code": item_code,
-				"item_name": line_item.get("title") or line_item.get("name"),
-				"rate": price,
-				"qty": qty,
-				"delivery_date": delivery_date,
-				"warehouse": store.warehouse,
-				"cost_center": store.cost_center,
-				"shopify_item_discount": per_item_discount,
-				"shopify_line_item_id": cstr(line_item.get("id")),
-				"reserve_stock": cint(reserve_stock),
-			}
-		)
+		item = {
+			"item_code": item_code,
+			"item_name": line_item.get("title") or line_item.get("name"),
+			"rate": price,
+			"qty": qty,
+			"delivery_date": delivery_date,
+			"warehouse": store.warehouse,
+			"cost_center": store.cost_center,
+			"shopify_item_discount": per_item_discount,
+			"shopify_line_item_id": cstr(line_item.get("id")),
+			"reserve_stock": cint(reserve_stock),
+		}
+		source_price = line_item.get("price")
+		original_price = Decimal(str(source_price)) if source_price not in (None, "") else None
+		if original_price == 0:
+			item["price_list_rate"] = 0
+		elif original_price is not None and total_discount > 0 and original_price * qty == total_discount:
+			# v15 restores the local list price for a zero rate unless the line has a full discount.
+			# Shopify reports zero tax after the discount, so use the rates to recover the original price.
+			tax_rate = (
+				sum(flt(tax.get("rate")) for tax in line_item.get("tax_lines") or [])
+				if taxes_inclusive
+				else 0
+			)
+			item["price_list_rate"] = flt(float(original_price) / (1 + tax_rate), 9)
+			item["discount_percentage"] = 100
+
+		items.append(item)
 
 	return items
 
@@ -1542,7 +1557,7 @@ def _get_item_price(line_item: dict, taxes_inclusive: bool) -> float:
 	qty = cint(line_item.get("quantity")) or 1
 
 	# Remove line item level discounts
-	total_discount = _get_total_discount(line_item)
+	total_discount = float(_get_total_discount(line_item))
 
 	# Get currency precision from system settings (defaults to 2 if not configured)
 	precision = get_currency_precision() or 2
@@ -1566,10 +1581,10 @@ def _get_item_price(line_item: dict, taxes_inclusive: bool) -> float:
 	return flt(line_amount / qty, 9)
 
 
-def _get_total_discount(line_item: dict) -> float:
+def _get_total_discount(line_item: dict) -> Decimal:
 	"""Get total discount amount from line item."""
 	discount_allocations = line_item.get("discount_allocations") or []
-	return sum(flt(discount.get("amount")) for discount in discount_allocations)
+	return sum((Decimal(str(discount.get("amount") or 0)) for discount in discount_allocations), Decimal(0))
 
 
 def _get_order_taxes(order: dict, store, items: list) -> list:
